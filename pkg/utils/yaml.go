@@ -14,34 +14,35 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-package main
+package utils
 
 import (
-	"context"
 	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
-	"k8s.io/klog"
+	yamlFormatter "sigs.k8s.io/yaml"
 )
 
-func main() {
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGSEGV)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		s := <-sigs
-		klog.V(1).Infof("Exiting on signal %s %#v", s.String(), s)
-		cancel()
-		<-time.After(1 * time.Second)
-		os.Exit(1)
-	}()
-
-	if err := Execute(ctx); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+func MustYAML(obj interface{}) string {
+	y, err := ToYAML(obj)
+	if err != nil {
+		panic(err)
 	}
+	return y
+}
+
+func ToYAML(obj interface{}) (string, error) {
+	formattedObj, err := yamlFormatter.Marshal(obj)
+	if err != nil {
+		return "", fmt.Errorf("error marshaling to YAML: %v", err)
+	}
+	return string(formattedObj), nil
+}
+
+func LogYAML(obj interface{}) error {
+	y, err := ToYAML(obj)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(y))
+	return nil
 }

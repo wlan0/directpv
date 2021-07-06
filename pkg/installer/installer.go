@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	directcsi "github.com/minio/direct-csi/pkg/apis/direct.csi.min.io/v1beta2"
 	"github.com/minio/direct-csi/pkg/topology"
 	"github.com/minio/direct-csi/pkg/utils"
 
@@ -40,95 +41,175 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
-const (
-	CreatedByLabel      = "created-by"
-	DirectCSIPluginName = "kubectl-direct_csi"
-
-	CSIDriver = "CSIDriver"
-	DirectCSI = "direct.csi.min.io"
-
-	clusterRoleVerbList   = "list"
-	clusterRoleVerbGet    = "get"
-	clusterRoleVerbWatch  = "watch"
-	clusterRoleVerbCreate = "create"
-	clusterRoleVerbDelete = "delete"
-	clusterRoleVerbUpdate = "update"
-	clusterRoleVerbPatch  = "patch"
-
-	volumeNameSocketDir       = "socket-dir"
-	volumeNameDevDir          = "dev-dir"
-	volumePathDevDir          = "/dev"
-	volumeNameSysDir          = "sys-fs"
-	volumePathSysDir          = "/sys"
-	volumeNameCSIRootDir      = "direct-csi-common-root"
-	volumeNameMountpointDir   = "mountpoint-dir"
-	volumeNameRegistrationDir = "registration-dir"
-	volumeNamePluginDir       = "plugins-dir"
-
-	directCSISelector = "selector.direct.csi.min.io"
-
-	directCSIContainerName           = "direct-csi"
-	livenessProbeContainerName       = "liveness-probe"
-	nodeDriverRegistrarContainerName = "node-driver-registrar"
-	csiProvisionerContainerName      = "csi-provisioner"
-
-	// "csi-provisioner:v2.1.0"
-	csiProvisionerContainerImage = "csi-provisioner@sha256:4ca2ce98430ca0b87d5bc1a6d116ecdf1619cfe6db693d8d5aa438f6821e0e80"
-	// "livenessprobe:v2.1.0"
-	livenessProbeContainerImage = "livenessprobe@sha256:6f056a175ff4ead772edc9bf99aef74c275a83c51868dd26090dcb623425a742"
-	// "csi-node-driver-registrar:v2.1.0"
-	nodeDriverRegistrarContainerImage = "csi-node-driver-registrar@sha256:9f9ce5c98e44d66b8ad34351616fdf78765b9f24c3c3b496cee784dadf63f528"
-
-	healthZContainerPort         = 9898
-	healthZContainerPortName     = "healthz"
-	healthZContainerPortProtocol = "TCP"
-	healthZContainerPortPath     = "/healthz"
-
-	kubeNodeNameEnvVar = "KUBE_NODE_NAME"
-	endpointEnvVarCSI  = "CSI_ENDPOINT"
-
-	kubeletDirPath = "/var/lib/kubelet"
-	csiRootPath    = "/var/lib/direct-csi/"
-
-	// debug log level default
-	logLevel = 3
-
-	// Admission controller
-	admissionControllerCertsDir    = "admission-webhook-certs"
-	AdmissionWebhookSecretName     = "validationwebhookcerts"
-	validationControllerName       = "directcsi-validation-controller"
-	admissionControllerWebhookName = "validatinghook"
-	ValidationWebhookConfigName    = "drive.validation.controller"
-	admissionControllerWebhookPort = 443
-	certsDir                       = "/etc/certs"
-	admissionWehookDNSName         = "directcsi-validation-controller.direct-csi-min-io.svc"
-	privateKeyFileName             = "key.pem"
-	publicCertFileName             = "cert.pem"
-
-	// Finalizers
-	DirectCSIFinalizerDeleteProtection = "/delete-protection"
-
-	// Conversion webhook
-	conversionWebhookName                  = "directcsi-conversion-webhook"
-	ConversionWebhookSecretName            = "conversionwebhookcerts"
-	conversionWebhookPortName              = "convwebhook"
-	conversionWebhookPort                  = 443
-	conversionDeploymentReadinessThreshold = 2
-	conversionDeploymentRetryInterval      = 3 * time.Second
-
-	conversionWebhookCertVolume  = "conversion-webhook-certs"
-	conversionWebhookCertsSecret = "converionwebhookcertsecret"
-	caCertFileName               = "ca.pem"
-	caDir                        = "/etc/CAs"
-)
-
 var (
-	validationWebhookCaBundle  []byte
-	conversionWebhookCaBundle  []byte
+	defaultLabels = map[string]string{ // labels
+		AppNameLabel: DirectCSI,
+		AppTypeLabel: CSIDriver,
+
+		utils.CreatedByLabel: DirectCSIPluginName,
+		utils.VersionLabel:   directcsi.Version,
+	}
+
+	defaultAnnotations = map[string]string{}
+
+	validationWebhookCaBundle []byte
+	conversionWebhookCaBundle []byte
+
 	ErrKubeVersionNotSupported = errors.New(
-		fmt.Sprintf("%s: This version of kubernetes is not supported by direct-csi. Please upgrade your kubernetes installation and try again", utils.Red("ERR")))
+		utils.Red("Error") +
+			"This version of kubernetes is not supported by direct-csi" +
+			"Please upgrade your kubernetes installation and try again",
+	)
 	ErrEmptyCABundle = errors.New("CA bundle is empty")
 )
+
+type DryRunFormat string
+
+const (
+	DryRunFormatUnknown DryRunFormat = ""
+	DryRunFormatYAML                 = "yaml"
+	DryRunFormatJSON                 = "json"
+)
+
+type Installer struct {
+	Identity string
+
+	// DirectCSIContainerImage properties
+	DirectCSIContainerImage    string
+	DirectCSIContainerOrg      string
+	DirectCSIContainerRegistry string
+
+	// CSIImage properties
+	CSIImageCSIProvisioner      string
+	CSIImageNodeDriverRegistrar string
+	CSIImageLivenessProbe       string
+
+	// Mode switches
+	LoopBackMode bool
+
+	// dry-run properties
+	DryRun       bool
+	DryRunFormat DryRunFormat
+
+	// ensure singleton
+	initialized bool
+
+	//internals
+	nsOwnerRef metav1.OwnerReference
+}
+
+// singleton - can be called multiple times safely
+func (i *Installer) init() {
+	defer func() {
+		i.initialized = true
+	}()
+
+	if i.initialized {
+		return
+	}
+
+	i.CSIImageCSIProvisioner = utils.DefaultIfZeroString(i.CSIImageCSIProvisioner, CSIImageCSIProvisioner)
+	i.CSIImageNodeDriverRegistrar = utils.DefaultIfZeroString(i.CSIImageNodeDriverRegistrar, CSIImageNodeDriverRegistrar)
+	i.CSIImageLivenessProbe = utils.DefaultIfZeroString(i.CSIImageLivenessProbe, CSIImageLivenessProbe)
+}
+
+func (i *Installer) CreateNS(ctx context.Context, name string) error {
+	i.init()
+
+	nsName := utils.DefaultIfZeroString(name, i.Identity)
+	ns := &corev1.Namespace{
+		TypeMeta: utils.NewTypeMeta("v1", "Namespace"),
+		ObjectMeta: utils.NewObjectMeta(
+			nsName,
+			metav1.NamespaceNone,
+			defaultLabels,
+			defaultAnnotations,
+			[]string{
+				metav1.FinalizerDeleteDependents, // foregroundDeletion finalizer
+			},
+			nil),
+		Spec: corev1.NamespaceSpec{},
+	}
+
+	// Create Namespace Obj
+	createdNS, err := utils.GetKubeClient().CoreV1().Namespaces().Create(ctx, ns, metav1.CreateOptions{
+		DryRun: i.getDryRunDirectives(),
+	})
+	if err != nil {
+		return err
+	}
+
+	return i.PostProc(createdNS)
+}
+
+func (i *Installer) CreateSC(ctx context.Context, name string) error {
+	i.init()
+
+	scName := utils.SanitizeKubeResourceName(utils.DefaultIfZeroString(name, i.Identity))
+	allowExpansionFalse := false
+	allowTopologiesWithName := utils.NewIdentityTopologySelector(scName)
+	reclaimPolicyDelete := corev1.PersistentVolumeReclaimDelete
+	bindingModeWaitForFirstConsumer := storagev1.VolumeBindingWaitForFirstConsumer
+
+	// Create StorageClass for the new driver
+	storageClass := &storagev1.StorageClass{
+		TypeMeta: utils.NewTypeMeta("storage.k8s.io/v1", "StorageClass"),
+		ObjectMeta: utils.NewObjectMeta(
+			scName,
+			metav1.NamespaceNone,
+			defaultLabels,
+			defaultAnnotations,
+			[]string{
+				metav1.FinalizerDeleteDependents, // foregroundDeletion finalizer
+			},
+			nil,
+		),
+		Provisioner:          scName,
+		AllowVolumeExpansion: &allowExpansionFalse,
+		VolumeBindingMode:    &bindingModeWaitForFirstConsumer,
+		AllowedTopologies: []corev1.TopologySelectorTerm{
+			allowTopologiesWithName,
+		},
+		ReclaimPolicy: &reclaimPolicyDelete,
+	}
+
+	createdSC, err := utils.GetKubeClient().StorageV1().StorageClasses().Create(ctx, storageClass, metav1.CreateOptions{
+		DryRun: i.getDryRunDirectives(),
+	})
+	if err != nil {
+		return err
+	}
+	return i.PostProc(createdSC)
+}
+
+func (i *Installer) PostProc(obj interface{}) error {
+	i.init()
+
+	if i.DryRun {
+		var format func(interface{}) string
+		if i.DryRunFormat == DryRunFormatJSON {
+			format = utils.MustJSON
+		} else {
+			format = func(obj interface{}) string {
+				return fmt.Sprintf("%s\n---\n", utils.MustYAML(obj))
+			}
+		}
+		fmt.Println(format(obj))
+	}
+
+	return nil
+}
+
+func (i *Installer) getDryRunDirectives() []string {
+	i.init()
+
+	if i.DryRun {
+		return []string{
+			metav1.DryRunAll,
+		}
+	}
+	return []string{}
+}
 
 func objMeta(name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{

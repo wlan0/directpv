@@ -14,34 +14,23 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-package main
+package utils
 
-import (
-	"context"
-	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
-
-	"k8s.io/klog"
-)
-
-func main() {
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGSEGV)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		s := <-sigs
-		klog.V(1).Infof("Exiting on signal %s %#v", s.String(), s)
-		cancel()
-		<-time.After(1 * time.Second)
-		os.Exit(1)
-	}()
-
-	if err := Execute(ctx); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+func FmapStringSlice(vs []string, f func(string) string) []string {
+	vsm := make([]string, len(vs))
+	for i, v := range vs {
+		vsm[i] = f(v)
 	}
+	return vsm
+}
+
+func FmapString(str string, f func(rune) rune) string {
+	retStr := []rune{}
+	for _, v := range str {
+		r := f(v)
+		if r != DEL {
+			retStr = append(retStr, r)
+		}
+	}
+	return string(retStr)
 }

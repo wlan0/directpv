@@ -27,7 +27,10 @@ func fmap(vs []string, f func(string) string) []string {
 }
 
 func checkWildcards(globElems []string) []string {
-	isStarPattern := func() bool { return len(globElems) == 1 && globElems[0] == "*" }
+	isStarPattern := func() bool {
+		return len(globElems) == 1 && globElems[0] == "*"
+	}
+
 	if len(globElems) == 0 || isStarPattern() {
 		globElems = []string{"**"}
 	}

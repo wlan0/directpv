@@ -14,34 +14,26 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-package main
+package utils
 
 import (
-	"context"
 	"fmt"
-	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
-	"k8s.io/klog"
+	jsonFormatter "encoding/json"
 )
 
-func main() {
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM, syscall.SIGSEGV)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		s := <-sigs
-		klog.V(1).Infof("Exiting on signal %s %#v", s.String(), s)
-		cancel()
-		<-time.After(1 * time.Second)
-		os.Exit(1)
-	}()
-
-	if err := Execute(ctx); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+func MustJSON(obj interface{}) string {
+	j, err := ToJSON(obj)
+	if err != nil {
+		panic(err)
 	}
+	return j
+}
+
+func ToJSON(obj interface{}) (string, error) {
+	formattedObj, err := jsonFormatter.MarshalIndent(obj, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("error marshaling to JSON: %v", err)
+	}
+	return string(formattedObj), nil
 }

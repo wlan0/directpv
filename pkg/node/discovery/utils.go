@@ -19,7 +19,6 @@ package discovery
 import (
 	"context"
 	"path/filepath"
-	"strings"
 
 	directcsi "github.com/minio/direct-csi/pkg/apis/direct.csi.min.io/v1beta2"
 	"github.com/minio/direct-csi/pkg/sys"
@@ -61,8 +60,10 @@ func syncDriveStatesOnDiscovery(existingObj *directcsi.DirectCSIDrive, localDriv
 	// Sync the labels
 	labels := localDrive.ObjectMeta.Labels
 	labels[directcsi.Group+"/access-tier"] = string(existingObj.Status.AccessTier)
-	labels[directcsi.Group+"/version"] = utils.GetVersionFromObjectMeta(existingObj.ObjectMeta)
+	// TODO: address this after merge
+	//labels[directcsi.Group+"/version"] = utils.GetVersionFromObjectMeta(existingObj.ObjectMeta)
 	existingObj.ObjectMeta.SetLabels(labels)
+
 	// Sync the possible states
 	existingObj.Status.RootPartition = localDrive.Status.RootPartition
 	existingObj.Status.PartitionNum = localDrive.Status.PartitionNum
@@ -95,7 +96,7 @@ func (d *Discovery) syncDrive(ctx context.Context, localDrive *directcsi.DirectC
 
 	driveSync := func() error {
 		existingDrive, err := driveClient.Get(ctx, localDrive.ObjectMeta.Name, metav1.GetOptions{
-			TypeMeta: utils.DirectCSIDriveTypeMeta(strings.Join([]string{directcsi.Group, directcsi.Version}, "/")),
+			TypeMeta: utils.DirectCSIDriveTypeMeta(),
 		})
 		if err != nil {
 			return err
@@ -115,7 +116,7 @@ func (d *Discovery) syncDrive(ctx context.Context, localDrive *directcsi.DirectC
 		}
 
 		updateOpts := metav1.UpdateOptions{
-			TypeMeta: utils.DirectCSIDriveTypeMeta(strings.Join([]string{directcsi.Group, directcsi.Version}, "/")),
+			TypeMeta: utils.DirectCSIDriveTypeMeta(),
 		}
 		_, err = driveClient.Update(ctx, existingDrive, updateOpts)
 		return err
