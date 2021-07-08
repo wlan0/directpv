@@ -155,10 +155,14 @@ func formatDrives(ctx context.Context, args []string) error {
 				klog.ErrorS(err, "error marshaling drives", "format", outputMode)
 			}
 		} else {
+			threadiness <- struct{}{}
 			wg.Add(1)
 			go func(d directcsi.DirectCSIDrive) {
-				defer wg.Done()
-
+				defer func() {
+					wg.Done()
+					<-threadiness
+				}()
+				
 				if _, err := directClient.DirectCSIDrives().Update(ctx, &d, metav1.UpdateOptions{}); err != nil {
 					klog.ErrorS(err, "failed to format drive", "drive", driveAddr)
 				}

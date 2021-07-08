@@ -44,6 +44,7 @@ var (
 )
 
 var printer func(interface{}) error
+var threadiness chan struct{}
 
 var pluginCmd = &cobra.Command{
 	Use:           "direct-csi",
@@ -54,6 +55,8 @@ var pluginCmd = &cobra.Command{
 	PersistentPreRunE: func(c *cobra.Command, args []string) error {
 		utils.Init()
 
+		threadiness = make(chan struct{}, 40)
+		
 		switch outputMode {
 		case "":
 		case "wide":

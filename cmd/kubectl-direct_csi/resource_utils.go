@@ -83,7 +83,7 @@ func getDrives(ctx context.Context, nodes []string, drives []string, accessTiers
 				return
 			default:
 				drives, err := directClient.DirectCSIDrives().List(ctx, metav1.ListOptions{
-					Limit:         100,
+					Limit:         40,
 					LabelSelector: labelSelector,
 					Continue:      cont,
 				})
