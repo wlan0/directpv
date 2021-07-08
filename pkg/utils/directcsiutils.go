@@ -34,7 +34,7 @@ var (
 
 	NodeLabel       = NewDirectCSILabel("node")
 	DriveLabel      = NewDirectCSILabel("drive")
-	DrivePathLabel  = NewDirectCSILabel("drive-path")
+	DrivePathLabel  = NewDirectCSILabel("path")
 	AccessTierLabel = NewDirectCSILabel("access-tier")
 
 	VersionLabel   = NewDirectCSILabel("version")

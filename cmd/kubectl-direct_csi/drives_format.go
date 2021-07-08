@@ -85,11 +85,12 @@ func init() {
 	formatDrivesCmd.PersistentFlags().BoolVarP(&force, "force", "f", force, "force format a drive even if a FS is already present")
 	formatDrivesCmd.PersistentFlags().StringSliceVarP(&accessTiers, "access-tier", "", accessTiers,
 		"format based on access-tier set. The possible values are hot|cold|warm")
+	formatDrivesCmd.PersistentFlags().BoolVarP(&unrelease, "unrelease", "u", unrelease, "unrelease drives")
 }
 
 func formatDrives(ctx context.Context, args []string) error {
 	if !all {
-		if len(drives) == 0 && len(nodes) == 0 && len(accessTiers) == 0 {
+		if len(drives) == 0 && len(nodes) == 0 && len(accessTiers) == 0 && len(args) == 0 {
 			return fmt.Errorf("atleast one of '%s', '%s' or '%s' should be specified",
 				utils.Bold("--all"),
 				utils.Bold("--drives"),
@@ -98,7 +99,13 @@ func formatDrives(ctx context.Context, args []string) error {
 	}
 
 	directClient := utils.GetDirectCSIClient()
-	driveCh := getDrives(ctx, nodes, drives, accessTiers)
+
+	var driveCh <-chan directcsi.DirectCSIDrive
+	if len(args) > 0 {
+		driveCh = getDrivesByIds(ctx, args)
+	} else {
+		driveCh = getDrives(ctx, nodes, drives, accessTiers)
+	}
 
 	wg := sync.WaitGroup{}
 	accessTierSet, aErr := getAccessTierSet(accessTiers)
@@ -128,21 +135,26 @@ func formatDrives(ctx context.Context, args []string) error {
 			continue
 		}
 
-		if d.Status.DriveStatus == directcsi.DriveStatusReady && !force {
-			klog.Errorf("%s is already owned and managed. Use %s to reformat",
-				utils.Bold(driveAddr), utils.Bold("--force"))
-			continue
+		if d.Status.DriveStatus == directcsi.DriveStatusReady {
+			if !force {
+				klog.Errorf("%s is already owned and managed. Use %s to reformat",
+					utils.Bold(driveAddr), utils.Bold("--force"))
+				continue
+			}
+			d.Status.DriveStatus = directcsi.DriveStatusAvailable
 		}
 		if d.Status.Filesystem != "" && !force {
 			klog.Errorf("%s already has a fs. Use %s to overwrite",
 				utils.Bold(driveAddr), utils.Bold("--force"))
 			continue
 		}
-
 		if d.Status.DriveStatus == directcsi.DriveStatusReleased {
-			klog.Errorf("%s is in 'released' state. Use 'kubectl direct-csi unrelease --drive %s --nodes %s' before formatting",
-				utils.Bold(driveAddr), path, nodeName)
-			continue
+			if !unrelease {
+				klog.Errorf("%s is in 'released' state. Use %s to format the released drives",
+					utils.Bold(driveAddr), utils.Bold("--unrelease"))
+				continue
+			}
+			d.Status.DriveStatus = directcsi.DriveStatusAvailable
 		}
 
 		d.Spec.DirectCSIOwned = true
@@ -162,7 +174,7 @@ func formatDrives(ctx context.Context, args []string) error {
 					wg.Done()
 					<-threadiness
 				}()
-				
+
 				if _, err := directClient.DirectCSIDrives().Update(ctx, &d, metav1.UpdateOptions{}); err != nil {
 					klog.ErrorS(err, "failed to format drive", "drive", driveAddr)
 				}

@@ -17,13 +17,24 @@
 package utils
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
 
 	directcsi "github.com/minio/direct-csi/pkg/apis/direct.csi.min.io/v1beta2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"k8s.io/klog"
 )
+
+func JSONifyAndLog(val interface{}) {
+	jsonBytes, err := json.MarshalIndent(val, "", " ")
+	if err != nil {
+		return
+	}
+	klog.V(3).Infof(string(jsonBytes))
+}
 
 func BoolToCondition(val bool) metav1.ConditionStatus {
 	if val {

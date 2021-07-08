@@ -56,7 +56,7 @@ var pluginCmd = &cobra.Command{
 		utils.Init()
 
 		threadiness = make(chan struct{}, 40)
-		
+
 		switch outputMode {
 		case "":
 		case "wide":

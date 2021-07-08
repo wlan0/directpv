@@ -272,6 +272,7 @@ func (c *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 
 	drive, err := matchDrive()
 	if err != nil {
+		utils.JSONifyAndLog(req.GetAccessibilityRequirements())
 		return nil, err
 	}
 

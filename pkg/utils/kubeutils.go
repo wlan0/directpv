@@ -25,9 +25,9 @@ const (
 	DEL rune = 127
 )
 
-func UpdateLabels(obj metav1.Object, labelKVs... string) {
+func UpdateLabels(obj metav1.Object, labelKVs ...string) {
 	labels := obj.GetLabels()
-	for i := 0; i < len(labelKVs); i+=2 {
+	for i := 0; i < len(labelKVs); i += 2 {
 		k := labelKVs[i]
 		v := ""
 		if len(labelKVs) > i+1 {
@@ -45,13 +45,12 @@ func GetLabelV(obj metav1.Object, key string) string {
 
 func SetLabelKV(obj metav1.Object, key, value string) {
 	labels := obj.GetLabels()
-	
+
 	sk, sv := SanitizeLabelKV(key, value)
 	labels[sk] = sv
-	
+
 	obj.SetLabels(labels)
 }
-
 
 // NewObjectMeta - creates a new TypeMeta
 // upcoming:

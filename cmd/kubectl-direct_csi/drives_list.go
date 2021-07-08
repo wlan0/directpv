@@ -137,11 +137,12 @@ func listDrives(ctx context.Context, args []string) error {
 		},
 		Items: filteredDrives,
 	}
-	if printer != nil {
+	if yaml || json {
 		if err := printer(wrappedDriveList); err != nil {
 			klog.ErrorS(err, "error marshaling drives", "format", outputMode)
 			return err
 		}
+		return nil
 	}
 
 	headers := func() []interface{} {
