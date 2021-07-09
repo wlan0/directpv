@@ -23,8 +23,8 @@ import (
 
 	directcsi "github.com/minio/direct-csi/pkg/apis/direct.csi.min.io/v1beta2"
 	"github.com/minio/direct-csi/pkg/utils"
-
 	"k8s.io/apimachinery/pkg/api/errors"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
@@ -75,7 +75,7 @@ func getDrives(ctx context.Context, nodes []string, drives []string, accessTiers
 	go func() {
 		defer close(driveCh)
 		cont := ""
-		klog.V(5).InfoS("Listing DirectCSIDrives", "limit", 100, "selectors", labelSelector)
+		klog.V(5).InfoS("Listing DirectCSIDrives", "limit", 40, "selectors", labelSelector)
 
 		directClient := utils.GetDirectCSIClient()
 		for {

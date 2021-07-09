@@ -36,8 +36,7 @@ import (
 const XFS = "xfs"
 
 var (
-	force     = false
-	unrelease = false
+	force = false
 )
 
 var formatDrivesCmd = &cobra.Command{
@@ -56,9 +55,6 @@ $ kubectl direct-csi drives format --nodes=directcsi-1
 
 # Format all drives based on the access-tier set [hot|cold|warm]
 $ kubectl direct-csi drives format --access-tier=hot
-
-# Format and unrelease all 'released' drives
-$ kubectl direct-csi drives format --unrelease --all
 
 # Combine multiple parameters using multi-arg
 $ kubectl direct-csi drives format --nodes=directcsi-1 --nodes=othernode-2 --status=available
@@ -85,7 +81,6 @@ func init() {
 	formatDrivesCmd.PersistentFlags().BoolVarP(&force, "force", "f", force, "force format a drive even if a FS is already present")
 	formatDrivesCmd.PersistentFlags().StringSliceVarP(&accessTiers, "access-tier", "", accessTiers,
 		"format based on access-tier set. The possible values are hot|cold|warm")
-	formatDrivesCmd.PersistentFlags().BoolVarP(&unrelease, "unrelease", "u", unrelease, "unrelease drives")
 }
 
 func formatDrives(ctx context.Context, args []string) error {
@@ -136,12 +131,9 @@ func formatDrives(ctx context.Context, args []string) error {
 		}
 
 		if d.Status.DriveStatus == directcsi.DriveStatusReady {
-			if !force {
-				klog.Errorf("%s is already owned and managed. Use %s to reformat",
-					utils.Bold(driveAddr), utils.Bold("--force"))
-				continue
-			}
-			d.Status.DriveStatus = directcsi.DriveStatusAvailable
+			klog.Errorf("%s is already owned and managed",
+				utils.Bold(driveAddr))
+			continue
 		}
 		if d.Status.Filesystem != "" && !force {
 			klog.Errorf("%s already has a fs. Use %s to overwrite",
@@ -149,12 +141,9 @@ func formatDrives(ctx context.Context, args []string) error {
 			continue
 		}
 		if d.Status.DriveStatus == directcsi.DriveStatusReleased {
-			if !unrelease {
-				klog.Errorf("%s is in 'released' state. Use %s to format the released drives",
-					utils.Bold(driveAddr), utils.Bold("--unrelease"))
-				continue
-			}
-			d.Status.DriveStatus = directcsi.DriveStatusAvailable
+			klog.Errorf("%s is in 'released' state. Use 'kubectl direct-csi drives unrelease --drive %s --nodes %s' before formatting",
+				utils.Bold(driveAddr), path, nodeName)
+			continue
 		}
 
 		d.Spec.DirectCSIOwned = true
