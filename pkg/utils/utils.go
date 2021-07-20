@@ -19,6 +19,7 @@ package utils
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 
 	directcsi "github.com/minio/direct-csi/pkg/apis/direct.csi.min.io/v1beta2"
@@ -77,4 +78,14 @@ func DefaultIfZeroFloat(left, right float32) float32 {
 
 func DefaultIfZeroFloat64(left, right float64) float64 {
 	return defaultIfZero(left, right).(float64)
+}
+
+var sanitizeNameRegex = regexp.MustCompile("[^a-zA-Z0-9-]")
+
+func SanitizeName(name string) string {
+	name = sanitizeNameRegex.ReplaceAllString(name, "-")
+	if strings.HasSuffix(name, "-") {
+		name += "X"
+	}
+	return name
 }

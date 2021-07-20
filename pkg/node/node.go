@@ -68,7 +68,7 @@ func NewNodeServer(ctx context.Context, identity, nodeID, rack, zone, region str
 
 	// Start background tasks
 	go drive.StartDriveController(ctx, nodeID)
-	go volume.StartVolumeController(ctx, nodeID)
+	go volume.StartController(ctx, nodeID)
 	go metrics.ServeMetrics(ctx, nodeID)
 
 	return nodeServer, nil

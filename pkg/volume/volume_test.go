@@ -40,16 +40,15 @@ const (
 	testNodeName = "test-node"
 )
 
-func createFakeVolumeListener() *DirectCSIVolumeListener {
+func createFakeVolumeEventListener() *VolumeEventHandler {
 	utils.SetFake()
-	fakeKubeClnt := utils.GetKubeClient()
-	fakeDirectCSIClnt := utils.GetDirectClientset()
-	return &DirectCSIVolumeListener{
-		kubeClient:      fakeKubeClnt,
-		directcsiClient: fakeDirectCSIClnt,
+	return &VolumeEventHandler{
+		kubeClient:      utils.GetKubeClient(),
+		directCSIClient: utils.GetDirectClientset(),
 		nodeID:          testNodeName,
 	}
 }
+
 func TestUpdateVolumeDelete(t *testing.T) {
 	testDriveName := "test_drive"
 	testVolumeName20MB := "test_volume_20MB"
@@ -152,9 +151,9 @@ func TestUpdateVolumeDelete(t *testing.T) {
 	}
 
 	ctx := context.TODO()
-	vl := createFakeVolumeListener()
-	vl.directcsiClient = fakedirect.NewSimpleClientset(testObjects...)
-	directCSIClient := vl.directcsiClient.DirectV1beta2()
+	vl := createFakeVolumeEventListener()
+	vl.directCSIClient = fakedirect.NewSimpleClientset(testObjects...)
+	directCSIClient := vl.directCSIClient.DirectV1beta2()
 
 	for _, testObj := range testObjects {
 		vObj, ok := testObj.(*directcsi.DirectCSIVolume)
@@ -169,7 +168,7 @@ func TestUpdateVolumeDelete(t *testing.T) {
 		}
 
 		now := metav1.Now()
-		newObj.ObjectMeta.DeletionTimestamp = &now
+		newObj.DeletionTimestamp = &now
 
 		if err := vl.Update(ctx, vObj, newObj); err != nil {
 			t.Fatalf("Error while invoking the volume update listener: %+v", err)
@@ -202,7 +201,7 @@ func TestUpdateVolumeDelete(t *testing.T) {
 }
 
 func TestAddAndDeleteVolumeNoOp(t *testing.T) {
-	vl := createFakeVolumeListener()
+	vl := createFakeVolumeEventListener()
 	b := directcsi.DirectCSIVolume{
 		TypeMeta: utils.DirectCSIVolumeTypeMeta(),
 		ObjectMeta: metav1.ObjectMeta{
