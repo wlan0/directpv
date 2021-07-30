@@ -49,6 +49,7 @@ type testEventHandler struct {
 	kubeClient      kubernetes.Interface
 	directCSIClient clientset.Interface
 	handleFunc      func(t *testing.T, args EventArgs) error
+	ctx             context.Context
 }
 
 func (handler *testEventHandler) ListerWatcher() cache.ListerWatcher {
@@ -68,10 +69,10 @@ func (handler *testEventHandler) ListerWatcher() cache.ListerWatcher {
 
 	return &cache.ListWatch{
 		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
-			return handler.directCSIClient.DirectV1beta2().DirectCSIVolumes().List(context.TODO(), options)
+			return handler.directCSIClient.DirectV1beta2().DirectCSIVolumes().List(handler.ctx, options)
 		},
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
-			return handler.directCSIClient.DirectV1beta2().DirectCSIVolumes().Watch(context.TODO(), options)
+			return handler.directCSIClient.DirectV1beta2().DirectCSIVolumes().Watch(handler.ctx, options)
 		},
 	}
 }
@@ -109,7 +110,7 @@ func (handler *testEventHandler) Handle(ctx context.Context, args EventArgs) err
 	return nil
 }
 
-func startTestController(t *testing.T, objects []runtime.Object, handleFunc func(t *testing.T, args EventArgs) error) context.CancelFunc {
+func startTestController(ctx context.Context, t *testing.T, objects []runtime.Object, handleFunc func(t *testing.T, args EventArgs) error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +118,7 @@ func startTestController(t *testing.T, objects []runtime.Object, handleFunc func
 
 	listener := NewListener(
 		&testEventHandler{
+			ctx:             ctx,
 			kubeClient:      kubernetesfake.NewSimpleClientset(),
 			directCSIClient: clientsetfake.NewSimpleClientset(objects...),
 			t:               t,
@@ -124,15 +126,14 @@ func startTestController(t *testing.T, objects []runtime.Object, handleFunc func
 		},
 		"volume-controller",
 		hostname,
-		1,
+		10,
 	)
 
-	ctx, cancelFunc := context.WithCancel(context.Background())
-	if err := listener.Run(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	return cancelFunc
+	go func() {
+		if err := listener.Run(ctx); err != nil {
+			t.Error(err)
+		}
+	}()
 }
 
 func TestListener(t *testing.T) {
@@ -141,24 +142,6 @@ func TestListener(t *testing.T) {
 	testVolumeName30MB := "test_volume_30MB"
 
 	objects := []runtime.Object{
-		&directcsi.DirectCSIDrive{
-			TypeMeta: utils.DirectCSIDriveTypeMeta(),
-			ObjectMeta: metav1.ObjectMeta{
-				Name: testDriveName,
-				Finalizers: []string{
-					string(directcsi.DirectCSIDriveFinalizerDataProtection),
-					directcsi.DirectCSIDriveFinalizerPrefix + testVolumeName20MB,
-					directcsi.DirectCSIDriveFinalizerPrefix + testVolumeName30MB,
-				},
-			},
-			Status: directcsi.DirectCSIDriveStatus{
-				NodeName:          nodeID,
-				DriveStatus:       directcsi.DriveStatusInUse,
-				FreeCapacity:      mb50,
-				AllocatedCapacity: mb50,
-				TotalCapacity:     mb100,
-			},
-		},
 		&directcsi.DirectCSIVolume{
 			TypeMeta: utils.DirectCSIVolumeTypeMeta(),
 			ObjectMeta: metav1.ObjectMeta{
@@ -166,6 +149,7 @@ func TestListener(t *testing.T) {
 				Finalizers: []string{
 					string(directcsi.DirectCSIVolumeFinalizerPurgeProtection),
 				},
+				UID: "1",
 			},
 			Status: directcsi.DirectCSIVolumeStatus{
 				NodeName:      nodeID,
@@ -204,6 +188,7 @@ func TestListener(t *testing.T) {
 				Finalizers: []string{
 					string(directcsi.DirectCSIVolumeFinalizerPurgeProtection),
 				},
+				UID: "2",
 			},
 			Status: directcsi.DirectCSIVolumeStatus{
 				NodeName:      nodeID,
@@ -237,13 +222,17 @@ func TestListener(t *testing.T) {
 		},
 	}
 
+	ctx, cancelFunc := context.WithTimeout(context.Background(), 5*time.Second)
+	argv := 0
 	handleFunc := func(t *testing.T, args EventArgs) error {
-		fmt.Println(args)
+		fmt.Printf("event received: %#v\n", args)
+		argv++
+		if argv == 2 {
+			cancelFunc()
+		}
 		return nil
 	}
 
-	cancelFunc := startTestController(t, objects, handleFunc)
-	fmt.Println("started test controller")
-	defer cancelFunc()
-	time.Sleep(3 * time.Second)
+	startTestController(ctx, t, objects, handleFunc)
+	<-ctx.Done()
 }
