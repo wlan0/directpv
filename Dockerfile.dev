@@ -1,20 +1,16 @@
-FROM registry.access.redhat.com/ubi8/ubi-minimal:8.4
+FROM ubuntu:20.04
 
 WORKDIR /
 
-COPY direct-csi /direct-csi
-COPY CREDITS /licenses/CREDITS
-COPY LICENSE /licenses/LICENSE
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LIBGUESTFS_DEBUG=1
+ENV LIBGUESTFS_TRACE=1
 
-RUN microdnf update --nodocs
+RUN apt-get update
 
-COPY centos.repo /etc/yum.repos.d/CentOS.repo
+RUN apt-get install -y --no-install-recommends tzdata
+RUN apt-get install -y qemu-kvm libguestfs-tools libvirt-daemon-system 
 
-RUN \
-    curl -L https://www.centos.org/keys/RPM-GPG-KEY-CentOS-Official -o /etc/pki/rpm-gpg/RPM-GPG-KEY-CentOS-Official && \
-    mv /etc/yum.repos.d/ubi.repo /etc/yum.repos.d/ubi.repo.old && \
-    microdnf install xfsprogs --nodocs && \
-    microdnf clean all && \
-    rm -f /etc/yum.repos.d/CentOS.repo
+COPY hack/local-test-env.sh /local-test-env.sh
 
-ENTRYPOINT ["/direct-csi"]
+ENTRYPOINT /local-test-env.sh

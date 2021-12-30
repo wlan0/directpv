@@ -1,32 +1,27 @@
-DirectCSI
-----------
+DirectPV
+--------
 
-![build](https://github.com/minio/direct-csi/workflows/Go/badge.svg) ![license](https://img.shields.io/badge/license-AGPL%20V3-blue) [![codecov](https://codecov.io/gh/minio/direct-csi/branch/master/graph/badge.svg?token=NV0686IUUI)](https://codecov.io/gh/minio/direct-csi)
+![build](https://github.com/minio/direct-csi/workflows/Go/badge.svg) ![license](https://img.shields.io/badge/license-AGPL%20V3-blue) 
 
-DirectCSI is a CSI driver that provisions volumes for workloads that require direct access to the storage medium. A storage medium is accessed _directly_ when there are no layers of indirection between the application accessing storage and the storage medium. Direct access is crucial for applications that are:
+![Architecture Diagram](./architecture.png)
 
- 1. I/O intensive or
- 2. IOPS intensive or
- 3. Manage reliability of data at the application layer or
- 4. Require high consistency guarantees or
- 5. Any combination of the above
+DirectPV is a [CSI driver](https://kubernetes-csi.github.io/docs/introduction.html) for dynamically provisioning local persistent volumes across distributed set of storage nodes. It is a distributed logical volume manager to carve out PVs using XFS quotas within the drives.
 
-High performance applications that are tolerant to drive failures, and/or have the capability to heal data are ideal applications for DirectCSI. Examples of such applications are:
+Modern distributed datastores such as MinIO, Elastic, Cassandra, and MongoDB are designed to for locally attached drives (Local PV). These data services handle high availability and data durability by themselves. Running them on traditional SAN or NAS based CSI drivers (Network PV) adds yet another layer of replication/erasure coding and extra network hops in the datapath. This additional layer of disaggregation results in increased-complexity and poor performance.
 
- 1. MinIO
- 2. Cassandra DB
+Historically, these datastores relied on Kubernetes-provided HostPath and LocalPV for using locally attached drives. Local and Host Path Volume drivers are manual, static and ephemeral, introducing management complexity. 
 
 ### QuickStart
 
 Here is the ***extremely*** quickstart:
 
 ```sh
-kubectl krew install direct-csi
-kubectl direct-csi install
-kubectl direct-csi drives ls
-# choose all the drives that direct-csi should manage and format them
-kubectl direct-csi drives format --drives $DRIVE_SELECTOR_ELLIPSES --nodes $NODE_SELECTOR_ELLIPSES
-# 'direct-csi-min-io' can now be specified as the storageclass in PodSpec.VolumeClaimTemplates
+kubectl krew install directpv
+kubectl directpv install
+kubectl directpv drives ls
+# choose all the drives that directpv should manage and format them
+kubectl directpv drives format --drives $DRIVE_SELECTOR_ELLIPSES --nodes $NODE_SELECTOR_ELLIPSES
+# 'directpv-min-io' can now be specified as the storageclass in PodSpec.VolumeClaimTemplates
 ```
 
 For more information, please visit our [documentation](./docs/index.md).
@@ -58,7 +53,7 @@ The high consistency and performance benefits of DirectCSI come with the limitat
 
 ### LICENSE
 
-Use of `direct-csi` driver is governed by the GNU AGPLv3 license that can be found in the [LICENSE](./LICENSE) file.
+Use of `directpv` driver is governed by the GNU AGPLv3 license that can be found in the [LICENSE](./LICENSE) file.
 
 Security
 ---------
