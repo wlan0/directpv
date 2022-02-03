@@ -30,6 +30,7 @@ import (
 	"github.com/google/uuid"
 	ctrl "github.com/minio/directpv/pkg/controller"
 	"github.com/minio/directpv/pkg/converter"
+	"github.com/minio/directpv/pkg/drive"
 	"github.com/minio/directpv/pkg/fs/xfs"
 	id "github.com/minio/directpv/pkg/identity"
 	"github.com/minio/directpv/pkg/mount"
@@ -144,10 +145,13 @@ func checkXFS(ctx context.Context) (bool, error) {
 	return true, mount.Unmount(mountPoint, true, true, false)
 }
 
-func run(ctx context.Context, args []string) error {
+func run(ctxMain context.Context, args []string) error {
+	ctx, cancel := context.WithCancel(ctxMain)
+	errChan := make(chan error)
+
 	// Start dynamic drive handler container.
 	if dynamicDriveHandler {
-		return node.StartDynamicDriveHandler(ctx, identity, nodeID, rack, zone, region, loopbackOnly)
+		return 
 	}
 
 	// Start conversion webserver
@@ -174,8 +178,8 @@ func run(ctx context.Context, args []string) error {
 		}
 
 		if !dynamicDriveDiscovery {
-			klog.V(3).Infof("Enable dynamic drive change management using '--dynamic-drive-discovery' flag")
-			klog.V(3).Infof("This flag will be made default in the next major release version")
+			//klog.V(3).Infof("Enable dynamic drive change management using '--dynamic-drive-discovery' flag")
+			//klog.V(3).Infof("This flag will be made default in the next major release version")
 
 			discovery, err := discovery.NewDiscovery(ctx, identity, nodeID, rack, zone, region)
 			if err != nil {
@@ -187,7 +191,31 @@ func run(ctx context.Context, args []string) error {
 			klog.V(3).Infof("Drive discovery finished")
 		}
 
-		nodeSrv, err = node.NewNodeServer(ctx, identity, nodeID, rack, zone, region, dynamicDriveDiscovery, reflinkSupport, loopbackOnly, metricsPort)
+		go func() {
+			if err := drive.StartController(ctx, nodeID, reflinkSupport); err != nil {
+				klog.ErrorS(err, "failed to start drive controller")
+				errChan <- err
+			}
+		}()
+
+		go func() {
+			if err := volume.StartController(ctx, nodeID); err != nil {
+				klog.ErrorS(err, "failed to start volume controller")
+				errChan <- err
+			}
+		}()
+
+		nodeSrv, err = node.NewNodeServer(ctx,
+			identity,
+			nodeID,
+			rack,
+			zone,
+			region,
+			dynamicDriveDiscovery,
+			reflinkSupport,
+			loopbackOnly,
+			metricsPort,
+		)
 		if err != nil {
 			return err
 		}
@@ -195,7 +223,7 @@ func run(ctx context.Context, args []string) error {
 
 		// Check if the volume objects are migrated and CRDs versions are in-sync
 		volume.SyncVolumes(ctx, nodeID)
-		klog.V(3).Infof("Volumes sync completed")
+		klog.V(3).Infof("volumes sync completed")
 	}
 
 	var ctrlServer csi.ControllerServer
@@ -207,5 +235,16 @@ func run(ctx context.Context, args []string) error {
 		klog.V(3).Infof("controller manager started")
 	}
 
-	return grpc.Run(ctx, endpoint, idServer, ctrlServer, nodeSrv)
+	go func() {
+		if err := grpc.Run(ctx, endpoint, idServer, ctrlServer, nodeSrv); err != nil {
+			klog.ErrorS(err, "failed to start grpc server")
+			errChan <- err
+		}
+	}()
+
+	select {
+	case err := <-errChan:
+		cancel()
+		return err
+	}
 }
