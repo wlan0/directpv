@@ -44,12 +44,23 @@ func isDirectCSIMount(mountPoints []string) bool {
 	return false
 }
 
-// NewDirectCSIDriveStatus creates direct CSI drive status.
-func NewDirectCSIDriveStatus(device *sys.Device, nodeID string, topology map[string]string) directcsi.DirectCSIDriveStatus {
+func NewDriveStatus(device *sys.Device) directcsi.DriveStatus {
 	driveStatus := directcsi.DriveStatusAvailable
-	if device.Size < sys.MinSupportedDeviceSize || device.ReadOnly || device.Partitioned || device.SwapOn || device.Master != "" || !isDirectCSIMount(device.MountPoints) {
+	if device.Size < sys.MinSupportedDeviceSize ||
+		device.ReadOnly ||
+		device.Partitioned ||
+		device.SwapOn ||
+		device.Master != "" ||
+		!isDirectCSIMount(device.MountPoints) {
 		driveStatus = directcsi.DriveStatusUnavailable
 	}
+
+	return driveStatus
+}
+
+// NewDirectCSIDriveStatus creates direct CSI drive status.
+func NewDirectCSIDriveStatus(device *sys.Device, nodeID string, topology map[string]string) directcsi.DirectCSIDriveStatus {
+	driveStatus := NewDriveStatus(device)
 
 	mounted := metav1.ConditionFalse
 	if device.FirstMountPoint != "" {
