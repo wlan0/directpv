@@ -151,7 +151,8 @@ func run(ctxMain context.Context, args []string) error {
 
 	// Start dynamic drive handler container.
 	if dynamicDriveHandler {
-		return 
+		// Need to fix
+		return nil
 	}
 
 	// Start conversion webserver
@@ -189,6 +190,10 @@ func run(ctxMain context.Context, args []string) error {
 				return fmt.Errorf("error while initializing drive discovery: %v", err)
 			}
 			klog.V(3).Infof("Drive discovery finished")
+
+			// Check if the volume objects are migrated and CRDs versions are in-sync
+			volume.SyncVolumes(ctx, nodeID)
+			klog.V(3).Infof("volumes sync completed")
 		}
 
 		go func() {
@@ -221,9 +226,6 @@ func run(ctxMain context.Context, args []string) error {
 		}
 		klog.V(3).Infof("node server started")
 
-		// Check if the volume objects are migrated and CRDs versions are in-sync
-		volume.SyncVolumes(ctx, nodeID)
-		klog.V(3).Infof("volumes sync completed")
 	}
 
 	var ctrlServer csi.ControllerServer
