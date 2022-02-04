@@ -23,18 +23,22 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"syscall"
 
-	"k8s.io/klog/v2"
+	"github.com/minio/directpv/pkg/sys"
 )
 
 const (
 	libudev      = "libudev\x00"
 	libudevMagic = 0xfeedcafe
 	minMsgLen    = 40
+
+	add    = "add"
+	change = "change"
+	remove = "remove"
 )
 
 var (
@@ -46,9 +50,24 @@ var (
 )
 
 type deviceEvent struct {
-	path  string
-	major int
-	minor int
+	Path  string
+	Major int
+	Minor int
+	Action string
+	Partition int
+	WWID string
+	Model string
+	UeventSerial string
+	Vendor string
+	DMName string
+	DMUUID string
+	MDUUID string
+	PTUUID string
+	PTType string
+	PartUUID string
+	UeventFSUUID string
+	FSType string
+	FSUUID string
 }
 
 type listener struct {
@@ -122,8 +141,106 @@ func (l *Listener) getNextDeviceUEvent(ctx context.Context) (*deviceEvent, error
 	}
 }
 
+func parse(msg []byte) (map[string]string, error) {
+	if !bytes.HasPrefix(msg, []byte(libudev)) {
+		return nil, errors.New("libudev signature not found")
+	}
+
+	// magic number is stored in network byte order.
+	if magic := binary.BigEndian.Uint32(msg[8:]); magic != libudevMagic {
+		return nil, fmt.Errorf("libudev magic mismatch; expected: %v, got: %v", libudevMagic, magic)
+	}
+
+	offset := int(msg[16])
+	if offset < 17 {
+		return nil, fmt.Errorf("payload offset %v is not more than 17", offset)
+	}
+	if offset > len(msg) {
+		return nil, fmt.Errorf("payload offset %v beyond message length %v", offset, len(msg))
+	}
+
+	fields := bytes.Split(msg[offset:], fieldDelimiter)
+	event := map[string]string{}
+	for _, field := range fields {
+		if len(field) == 0 {
+			continue
+		}
+		switch tokens := strings.SplitN(string(field), "=", 2); len(tokens) {
+		case 1:
+			event[tokens[0]] = ""
+		case 2:
+			event[tokens[0]] = tokens[1]
+		}
+	}
+	return event, nil
+}
+
+func normalizeUUID(uuid string) string {
+	if u := strings.ReplaceAll(strings.ReplaceAll(uuid, ":", ""), "-", ""); len(u) > 20 {
+		uuid = fmt.Sprintf("%v-%v-%v-%v-%v", u[:8], u[8:12], u[12:16], u[16:20], u[20:])
+	}
+	return uuid
+}
+
 func (l *listener) unmarshalDeviceUevent(buf []byte) (*deviceEvent, error) {
-	return nil, nil
+	eventMap, err := parse(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	if eventMap["SUBSYSTEM"] == "block" {
+		return nil, errNonDeviceEvent
+	}
+
+	name := filepath.Base(eventMap["DEVPATH"])
+	if name == "" {
+		return nil, fmt.Errorf("event does not have valid DEVPATH %v", event["DEVPATH"])
+	}
+
+	major, err := strconv.Atoi(eventMap["MAJOR"])
+	if err != nil {
+		return nil, err
+	}
+
+	minor, err := strconv.Atoi(eventMap["MINOR"])
+	if err != nil {
+		return nil, err
+	}
+
+	action := eventMap["ACTION"]
+	switch action {
+	case add, change, delete:
+	default:
+		return nil, fmt.Errorf("invalid action: %s", action)
+
+	var partition int
+	if value, found := eventMap["ID_PART_ENTRY_NUMBER"]; found {
+		partition, err = strconv.Atoi(value)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &deviceEvent{
+		Path: name,
+		Major: major,
+		Minor: minor,
+		Action: action,
+		Partition: partition,
+		WWID: eventMap["ID_WWN"],
+		Model: eventMap["ID_MODEL"],
+		UeventSerial: eventMap["ID_SERIAL_SHORT"],
+		Vendor: eventMap["ID_VENDOR"],
+		DMName: eventMap["DM_NAME"],
+		DMUUID: eventMap["DM_UUID"],
+		MDUUID: normalizeUUID(eventMap["MD_UUID"]),
+		PTUUID: eventMap["ID_PART_TABLE_UUID"],
+		PTType: eventMap["ID_PART_TABLE_TYPE"],
+		PartUUID: eventMap["ID_PART_ENTRY_UUID"],
+		UeventFSUUID: eventMap["ID_FS_UUID"],
+		FSType: eventMap["ID_FS_TYPE"],
+		FSUUID: eventMap["ID_FS_UUID"],
+	}, nil
 }
 
 func (l *listener) msgPeek() (int, *[]byte, error) {
