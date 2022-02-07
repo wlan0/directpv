@@ -142,3 +142,10 @@ func GetMajorMinorFromStr(majMin string) (major, minor uint32, err error) {
 	minor = uint32(minor64)
 	return
 }
+
+func NormalizeUUID(uuid string) string {
+	if u := strings.ReplaceAll(strings.ReplaceAll(uuid, ":", ""), "-", ""); len(u) > 20 {
+		uuid = fmt.Sprintf("%v-%v-%v-%v-%v", u[:8], u[8:12], u[12:16], u[16:20], u[20:])
+	}
+	return uuid
+}

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"path"
+	"strconv"
 
 	"github.com/google/uuid"
 
@@ -34,6 +35,37 @@ import (
 var (
 	errNoMatchFound = errors.New("no matching drive found")
 )
+
+func createDevice(event uevent.DeviceEvent) (device *sys.Device, err error) {
+	major, err := strconv.Atoi(event["MAJOR"])
+	if err != nil {
+		return nil, err
+	}
+
+	minor, err := strconv.Atoi(event["MINOR"])
+	if err != nil {
+		return nil, err
+	}
+
+	d.Path = name
+	d.Major = major
+	d.Minor = minor
+	d.Action = action
+	d.Partition = partition
+	d.WWID = eventMap["ID_WWN"]
+	d.Model = eventMap["ID_MODEL"]
+	d.UeventSerial = eventMap["ID_SERIAL_SHORT"]
+	d.Vendor = eventMap["ID_VENDOR"]
+	d.DMName = eventMap["DM_NAME"]
+	d.DMUUID = eventMap["DM_UUID"]
+	d.MDUUID = utils.NormalizeUUID(eventMap["MD_UUID"])
+	d.PTUUID = eventMap["ID_PART_TABLE_UUID"]
+	d.PTType = eventMap["ID_PART_TABLE_TYPE"]
+	d.PartUUID = eventMap["ID_PART_ENTRY_UUID"]
+	d.UeventFSUUID = eventMap["ID_FS_UUID"]
+	d.FSType = eventMap["ID_FS_TYPE"]
+	d.FSUUID = eventMap["ID_FS_UUID"]
+}
 
 func RunDynamicDriveHandler(ctx context.Context,
 	identity, nodeID, rack, zone, region string,
@@ -100,22 +132,23 @@ func (d *driveEventHandler) add(
 func (d *driveEventHandler) findMatchingDrive(drives []directcsi.DirectCSIDrive, device *sys.Device) (*directcsi.DirectCSIDrive, error) {
 	//  todo: run matching algorithm to find matching drive
 	//  note: return `errNoMatchFound` if no match is found
+	//  FIX ME: handle if more than one matching drive is found
 	return nil, errNoMatchFound
 }
 
-func (d *driveEventHandler) Handle(ctx context.Context, device *sys.Device) error {
+func (d *driveEventHandler) Handle(ctx context.Context, deviceEvent *uevent.DeviceEvent) error {
 
-	if sys.LoopRegexp.MatchString(path.Base(event["DEVPATH"])) {
+	if sys.LoopRegexp.MatchString(path.Base(deviceEvent.Path)) {
 		klog.V(5).InfoS(
 			"loopback device is ignored",
-			"ACTION", event["ACTION"],
-			"DEVPATH", event["DEVPATH"])
+			"ACTION", deviceEvent.Action,
+			"DEVPATH", deviceEvent.Path)
 		return nil
 	}
 
-	device, err := d.createDevice(event)
+	device, err := d.createDevice(deviceEvent)
 	if err != nil {
-		klog.ErrorS(err, "ACTION", event["ACTION"], "DEVPATH", event["DEVPATH"])
+		klog.ErrorS(err, "ACTION", deviceEvent.Action, "DEVPATH", deviceEvent.Path)
 		return nil
 	}
 
@@ -133,16 +166,16 @@ func (d *driveEventHandler) Handle(ctx context.Context, device *sys.Device) erro
 	drive, err := d.findMatchingDrive(drives, device)
 	switch {
 	case errors.Is(err, errNoMatchFound):
-		if event["ACTION"] == uevent.Remove {
+		if deviceEvent.Action == uevent.Remove {
 			klog.V(3).InfoS(
 				"matching drive not found",
 				"ACTION", uevent.Remove,
-				"DEVPATH", event["DEVPATH"])
+				"DEVPATH", deviceEvent.Path)
 			return nil
 		}
 		return d.add(ctx, device)
 	case err == nil:
-		switch event["ACTION"] {
+		switch deviceEvent.Action {
 		case uevent.Remove:
 			return d.remove(ctx, device, drive)
 		default:

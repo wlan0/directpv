@@ -49,7 +49,7 @@ var (
 	errEmptyBuf       = errors.New("buffer is empty")
 )
 
-type deviceEvent struct {
+type DeviceEvent struct {
 	Path  string
 	Major int
 	Minor int
@@ -68,6 +68,88 @@ type deviceEvent struct {
 	UeventFSUUID string
 	FSType string
 	FSUUID string
+}
+
+const (
+	SubsystemKey = "SUBSYSTEM"
+	DevPathKey = "DEVPATH"
+	MajorKey = "MAJOR"
+	MinorKey = "MINOR"
+	ActionKey = "ACTION"
+	IdPartEntryNumberKey = "ID_PART_ENTRY_NUMBER"
+	WWIDKey = "ID_WWN"
+	IDModelKey = "ID_MODEL"
+	IDSerialShortKey = "ID_SERIAL_SHORT"
+	IDVendorKey = "ID_VENDOR"
+	DMNameKey = "DM_NAME"
+	DMUUIDKey = "DM_UUID"
+	MDUUIDKey = "MD_UUID"
+	IDPartTableUUIDKey = "ID_PART_TABLE_UUID"
+	IDPartTableTypeKey = "ID_PART_TABLE_TYPE"
+	IDPartEntryUUIDKey = "ID_PART_ENTRY_UUID"
+	IDFSUUIDKey = "ID_FS_UUID"
+	IDFSTYPEKey = "ID_FS_TYPE"
+)
+
+func (d *DeviceEvent) parseAndLoadEventData(buf []byte) error {
+	eventMap, err := parse(buf)
+	if err != nil {
+		return err
+	}
+
+	if eventMap[SubsystemKey] == "block" {
+		return errNonDeviceEvent
+	}
+
+	name := filepath.Base(eventMap[DevPathKey])
+	if name == "" {
+		return fmt.Errorf("event does not have valid DEVPATH %v", event[DevPathKey])
+	}
+
+	major, err := strconv.Atoi(eventMap[MajorKey])
+	if err != nil {
+		return err
+	}
+
+	minor, err := strconv.Atoi(eventMap[MinorKey])
+	if err != nil {
+		return err
+	}
+
+	action := eventMap[ActionKey]
+	switch action {
+	case add, change, delete:
+	default:
+		return fmt.Errorf("invalid action: %s", action)
+
+	var partition int
+	if value, found := eventMap[IdPartEntryNumberKey]; found {
+		partition, err = strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+	}
+
+	d.Path = name
+	d.Major = major
+	d.Minor = minor
+	d.Action = action
+	d.Partition = partition
+	d.WWID = eventMap[WWIDKey]
+	d.Model = eventMap[IDModelKey]
+	d.UeventSerial = eventMap[IDSerialShortKey]
+	d.Vendor = eventMap[IDVendorKey]
+	d.DMName = eventMap[DMNameKey]
+	d.DMUUID = eventMap[DMUUIDKey]
+	d.MDUUID = utils.NormalizeUUID(eventMap[MDUUIDKey])
+	d.PTUUID = eventMap[IDPartTableUUIDKey]
+	d.PTType = eventMap[IDPartTableTypeKey]
+	d.PartUUID = eventMap[IDPartEntryUUIDKey]
+	d.UeventFSUUID = eventMap[IDFSUUIDKey]
+	d.FSType = eventMap[IDFSTYPEKey]
+	d.FSUUID = eventMap[IDFSUUIDKey]
+
+	return nil
 }
 
 type listener struct {
@@ -123,14 +205,15 @@ func Run(ctx context.Context, handler DeviceUEventHandler) error {
 	}
 }
 
-func (l *Listener) getNextDeviceUEvent(ctx context.Context) (*deviceEvent, error) {
+func (l *Listener) getNextDeviceUEvent(ctx context.Context) (*DeviceEvent, error) {
 	for {
 		buf, err := l.ReadMsg()
 		if err != nil {
 			return nil, err
 		}
 
-		dEv, err := l.unmarshalDeviceUevent(buf)
+		dEv := &DeviceEvent{}
+		err := dEv.parseAndLoadEventData(buf)
 		if err != nil {
 			if errors.Is(errNonBlockDevice) {
 				continue
@@ -175,72 +258,8 @@ func parse(msg []byte) (map[string]string, error) {
 	return event, nil
 }
 
-func normalizeUUID(uuid string) string {
-	if u := strings.ReplaceAll(strings.ReplaceAll(uuid, ":", ""), "-", ""); len(u) > 20 {
-		uuid = fmt.Sprintf("%v-%v-%v-%v-%v", u[:8], u[8:12], u[12:16], u[16:20], u[20:])
-	}
-	return uuid
-}
-
-func (l *listener) unmarshalDeviceUevent(buf []byte) (*deviceEvent, error) {
-	eventMap, err := parse(buf)
-	if err != nil {
-		return nil, err
-	}
-
-	if eventMap["SUBSYSTEM"] == "block" {
-		return nil, errNonDeviceEvent
-	}
-
-	name := filepath.Base(eventMap["DEVPATH"])
-	if name == "" {
-		return nil, fmt.Errorf("event does not have valid DEVPATH %v", event["DEVPATH"])
-	}
-
-	major, err := strconv.Atoi(eventMap["MAJOR"])
-	if err != nil {
-		return nil, err
-	}
-
-	minor, err := strconv.Atoi(eventMap["MINOR"])
-	if err != nil {
-		return nil, err
-	}
-
-	action := eventMap["ACTION"]
-	switch action {
-	case add, change, delete:
-	default:
-		return nil, fmt.Errorf("invalid action: %s", action)
-
-	var partition int
-	if value, found := eventMap["ID_PART_ENTRY_NUMBER"]; found {
-		partition, err = strconv.Atoi(value)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return &deviceEvent{
-		Path: name,
-		Major: major,
-		Minor: minor,
-		Action: action,
-		Partition: partition,
-		WWID: eventMap["ID_WWN"],
-		Model: eventMap["ID_MODEL"],
-		UeventSerial: eventMap["ID_SERIAL_SHORT"],
-		Vendor: eventMap["ID_VENDOR"],
-		DMName: eventMap["DM_NAME"],
-		DMUUID: eventMap["DM_UUID"],
-		MDUUID: normalizeUUID(eventMap["MD_UUID"]),
-		PTUUID: eventMap["ID_PART_TABLE_UUID"],
-		PTType: eventMap["ID_PART_TABLE_TYPE"],
-		PartUUID: eventMap["ID_PART_ENTRY_UUID"],
-		UeventFSUUID: eventMap["ID_FS_UUID"],
-		FSType: eventMap["ID_FS_TYPE"],
-		FSUUID: eventMap["ID_FS_UUID"],
-	}, nil
+func (l *listener) unmarshalDeviceUevent(buf []byte) (*DeviceEvent, error) {
+	
 }
 
 func (l *listener) msgPeek() (int, *[]byte, error) {

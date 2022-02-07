@@ -37,14 +37,15 @@ import (
 	fserrors "github.com/minio/directpv/pkg/fs/errors"
 	"github.com/minio/directpv/pkg/mount"
 	"github.com/minio/directpv/pkg/sys/smart"
+	"github.com/minio/directpv/pkg/udev"
 	"github.com/minio/directpv/pkg/uevent"
+	"github.com/minio/directpv/pkg/utils"
 	"golang.org/x/sys/unix"
 	"k8s.io/klog/v2"
 )
 
 const (
 	defaultBlockSize = 512
-	runUdevData      = "/run/udev/data"
 )
 
 func isUdevDataReadable() bool {
@@ -69,50 +70,6 @@ func getDeviceMajorMinor(device string) (major, minor uint32, err error) {
 		major, minor = uint32(unix.Major(stat.Rdev)), uint32(unix.Minor(stat.Rdev))
 	}
 	return
-}
-
-func normalizeUUID(uuid string) string {
-	if u := strings.ReplaceAll(strings.ReplaceAll(uuid, ":", ""), "-", ""); len(u) > 20 {
-		uuid = fmt.Sprintf("%v-%v-%v-%v-%v", u[:8], u[8:12], u[12:16], u[16:20], u[20:])
-	}
-	return uuid
-}
-
-func parseRunUdevDataFile(r io.Reader) (map[string]string, error) {
-	reader := bufio.NewReader(r)
-	event := map[string]string{}
-	for {
-		s, err := reader.ReadString('\n')
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return nil, err
-		}
-
-		if !strings.HasPrefix(s, "E:") {
-			continue
-		}
-
-		tokens := strings.SplitN(s, "=", 2)
-		key := strings.TrimPrefix(tokens[0], "E:")
-		switch len(tokens) {
-		case 1:
-			event[key] = ""
-		case 2:
-			event[key] = strings.TrimSpace(tokens[1])
-		}
-	}
-	return event, nil
-}
-
-func readRunUdevData(major, minor int) (map[string]string, error) {
-	file, err := os.Open(fmt.Sprintf("%v/b%v:%v", runUdevData, major, minor))
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	return parseRunUdevDataFile(file)
 }
 
 func readFirstLine(filename string, errorIfNotExist bool) (string, error) {
@@ -237,7 +194,7 @@ func getDMUUID(name string) (string, error) {
 
 func getMDUUID(name string) (string, error) {
 	uuid, err := readFirstLine("/sys/class/block/"+name+"/md/uuid", false)
-	return normalizeUUID(uuid), err
+	return utils.NormalizeUUID(uuid), err
 }
 
 func getVirtual(name string) (bool, error) {
@@ -428,7 +385,7 @@ func newDevice(event map[string]string, name string, major, minor int, virtual b
 	device.Vendor = event["ID_VENDOR"]
 	device.DMName = event["DM_NAME"]
 	device.DMUUID = event["DM_UUID"]
-	device.MDUUID = normalizeUUID(event["MD_UUID"])
+	device.MDUUID = utils.NormalizeUUID(event["MD_UUID"])
 	device.PTUUID = event["ID_PART_TABLE_UUID"]
 	device.PTType = event["ID_PART_TABLE_TYPE"]
 	device.PartUUID = event["ID_PART_ENTRY_UUID"]
@@ -489,7 +446,7 @@ func probeDevicesFromUdev() (devices map[string]*Device, err error) {
 			return nil, err
 		}
 
-		event, err := readRunUdevData(major, minor)
+		event, err := udev.ReadRunUdevData(major, minor)
 		if err != nil {
 			return nil, err
 		}
@@ -738,36 +695,60 @@ func probeDevices() (devices map[string]*Device, err error) {
 	return devices, nil
 }
 
-func createDevice(event map[string]string) (device *Device, err error) {
-	name := filepath.Base(event["DEVPATH"])
+// Partition int
+// 	WWID string
+// 	Model string
+// 	UeventSerial string
+// 	Vendor string
+// 	DMName string
+// 	DMUUID string
+// 	MDUUID string
+// 	PTUUID string
+// 	PTType string
+// 	PartUUID string
+// 	UeventFSUUID string
+// 	FSType string
+// 	FSUUID string
+func createDevice(
+	devPath string,
+	major int,
+	minor int,
+	action string,
+	partition int,
+	wwid string,
+	model string,
+	ueventSerial string,
+	vendor string,
+	dmName string,
+	dmUUID string,
+	MDUUID string,
+	ptUUID string,
+	ptType string,
+	partUUID string,
+	ueventFSUUID string,
+	fsType string,
+	fsUUID string,
+) (device *Device, err error) {
+	name := filepath.Base(devPath)
 	if name == "" {
-		return nil, fmt.Errorf("event does not have valid DEVPATH %v", event["DEVPATH"])
+		return nil, fmt.Errorf("event does not have valid DEVPATH %v", devPath)
 	}
 
-	major, err := strconv.Atoi(event["MAJOR"])
-	if err != nil {
-		return nil, err
-	}
-
-	minor, err := strconv.Atoi(event["MINOR"])
-	if err != nil {
-		return nil, err
-	}
-
-	switch event["ACTION"] {
-	case uevent.Add, uevent.Change:
-		// Older kernels like in CentOS 7 does not send all information about the device,
-		// hence read relevant data from /run/udev/data/b<major>:<minor>
-		info, err := readRunUdevData(major, minor)
-		if err != nil {
-			return nil, err
-		}
-		for key, value := range info {
-			if _, found := event[key]; !found {
-				event[key] = value
-			}
-		}
-	}
+	// switch action {
+	// case uevent.Add, uevent.Change:
+	// 	// Older kernels like in CentOS 7 does not send all information about the device,
+	// 	// hence read relevant data from /run/udev/data/b<major>:<minor>
+	// 	info, err := udev.readRunUdevData(major, minor)
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// 	for key, value := range info {
+	// 		if key
+	// 		// if _, found := event[key]; !found {
+	// 		// 	event[key] = value
+	// 		// }
+	// 	}
+	// }
 
 	if device, err = newDevice(event, name, major, minor, strings.Contains(event["DEVPATH"], "/virtual/")); err != nil {
 		return nil, err
