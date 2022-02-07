@@ -23,12 +23,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/minio/directpv/pkg/sys"
+	"github.com/minio/directpv/pkg/udev"
 )
 
 const (
@@ -42,33 +42,12 @@ const (
 )
 
 var (
-	pageSize       = os.Getpagesize()
-	fieldDelimiter = []byte{0}
-
 	errNonDeviceEvent = errors.New("Uevent is not for a block device")
-	errEmptyBuf       = errors.New("buffer is empty")
-)
+	pageSize          = os.Getpagesize()
+	fieldDelimiter    = []byte{0}
 
-type deviceEvent struct {
-	Path  string
-	Major int
-	Minor int
-	Action string
-	Partition int
-	WWID string
-	Model string
-	UeventSerial string
-	Vendor string
-	DMName string
-	DMUUID string
-	MDUUID string
-	PTUUID string
-	PTType string
-	PartUUID string
-	UeventFSUUID string
-	FSType string
-	FSUUID string
-}
+	errEmptyBuf = errors.New("buffer is empty")
+)
 
 type listener struct {
 	sockfd      int
@@ -114,30 +93,30 @@ func Run(ctx context.Context, handler DeviceUEventHandler) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			event, err := listener.getNextDeviceUEvent(ctx)
+			eventData, err := listener.getNextDeviceUEvent(ctx)
 			if err != nil {
 				return err
 			}
-			listener.queue.Push(event)
+			listener.queue.Push(eventData)
 		}
 	}
 }
 
-func (l *Listener) getNextDeviceUEvent(ctx context.Context) (*deviceEvent, error) {
+func (l *listener) getNextDeviceUEvent(ctx context.Context) (*udev.Data, error) {
 	for {
 		buf, err := l.ReadMsg()
 		if err != nil {
 			return nil, err
 		}
 
-		dEv, err := l.unmarshalDeviceUevent(buf)
+		udevData, err := l.parseUdevData(buf)
 		if err != nil {
-			if errors.Is(errNonBlockDevice) {
+			if errors.Is(err, errNonDeviceEvent) {
 				continue
 			}
 			return nil, err
 		}
-		return dEv, nil
+		return udevData, nil
 	}
 }
 
@@ -175,14 +154,7 @@ func parse(msg []byte) (map[string]string, error) {
 	return event, nil
 }
 
-func normalizeUUID(uuid string) string {
-	if u := strings.ReplaceAll(strings.ReplaceAll(uuid, ":", ""), "-", ""); len(u) > 20 {
-		uuid = fmt.Sprintf("%v-%v-%v-%v-%v", u[:8], u[8:12], u[12:16], u[16:20], u[20:])
-	}
-	return uuid
-}
-
-func (l *listener) unmarshalDeviceUevent(buf []byte) (*deviceEvent, error) {
+func (l *listener) parseUdevData(buf []byte) (*udev.Data, error) {
 	eventMap, err := parse(buf)
 	if err != nil {
 		return nil, err
@@ -192,55 +164,24 @@ func (l *listener) unmarshalDeviceUevent(buf []byte) (*deviceEvent, error) {
 		return nil, errNonDeviceEvent
 	}
 
-	name := filepath.Base(eventMap["DEVPATH"])
-	if name == "" {
-		return nil, fmt.Errorf("event does not have valid DEVPATH %v", event["DEVPATH"])
-	}
-
-	major, err := strconv.Atoi(eventMap["MAJOR"])
-	if err != nil {
-		return nil, err
-	}
-
-	minor, err := strconv.Atoi(eventMap["MINOR"])
-	if err != nil {
-		return nil, err
-	}
-
-	action := eventMap["ACTION"]
-	switch action {
-	case add, change, delete:
-	default:
-		return nil, fmt.Errorf("invalid action: %s", action)
-
-	var partition int
-	if value, found := eventMap["ID_PART_ENTRY_NUMBER"]; found {
-		partition, err = strconv.Atoi(value)
+	switch eventMap["ACTION"] {
+	case add, change:
+		// Older kernels like in CentOS 7 does not send all information about the device,
+		// hence read relevant data from /run/udev/data/b<major>:<minor>
+		major, err := strconv.Atoi(eventMap["MAJOR"])
 		if err != nil {
 			return nil, err
 		}
+		minor, err := strconv.Atoi(eventMap["MINOR"])
+		if err != nil {
+			return nil, err
+		}
+		return udev.ReadRunUdevData(major, minor)
+	case remove:
+		return udev.EventMapToUdevData(eventMap)
+	default:
+		return nil, fmt.Errorf("invalid device action: %s", action)
 	}
-
-	return &deviceEvent{
-		Path: name,
-		Major: major,
-		Minor: minor,
-		Action: action,
-		Partition: partition,
-		WWID: eventMap["ID_WWN"],
-		Model: eventMap["ID_MODEL"],
-		UeventSerial: eventMap["ID_SERIAL_SHORT"],
-		Vendor: eventMap["ID_VENDOR"],
-		DMName: eventMap["DM_NAME"],
-		DMUUID: eventMap["DM_UUID"],
-		MDUUID: normalizeUUID(eventMap["MD_UUID"]),
-		PTUUID: eventMap["ID_PART_TABLE_UUID"],
-		PTType: eventMap["ID_PART_TABLE_TYPE"],
-		PartUUID: eventMap["ID_PART_ENTRY_UUID"],
-		UeventFSUUID: eventMap["ID_FS_UUID"],
-		FSType: eventMap["ID_FS_TYPE"],
-		FSUUID: eventMap["ID_FS_UUID"],
-	}, nil
 }
 
 func (l *listener) msgPeek() (int, *[]byte, error) {

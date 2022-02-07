@@ -16,6 +16,8 @@
 
 package sys
 
+import "github.com/minio/directpv/pkg/udev"
+
 // GetMajorMinor gets major/minor number of given device.
 func GetMajorMinor(device string) (major, minor uint32, err error) {
 	return getDeviceMajorMinor(device)
@@ -27,8 +29,8 @@ func ProbeDevices() (devices map[string]*Device, err error) {
 }
 
 // CreateDevice creates new device structure for given event data.
-func CreateDevice(event map[string]string) (device *Device, err error) {
-	return createDevice(event)
+func CreateDevice(udevData *udev.Data) (device *Device, err error) {
+	return createDevice(udevData)
 }
 
 // GetDeviceName returns device name of given major/minor number.

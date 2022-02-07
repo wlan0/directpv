@@ -21,6 +21,8 @@ package sys
 import (
 	"fmt"
 	"runtime"
+
+	"github.com/minio/directpv/pkg/udev"
 )
 
 func getDeviceMajorMinor(device string) (major, minor uint32, err error) {
@@ -31,7 +33,7 @@ func probeDevices() (devices map[string]*Device, err error) {
 	return nil, fmt.Errorf("unsupported operating system %v", runtime.GOOS)
 }
 
-func createDevice(event map[string]string) (device *Device, err error) {
+func createDevice(udevData *udev.Data) (device *Device, err error) {
 	return nil, fmt.Errorf("unsupported operating system %v", runtime.GOOS)
 }
 

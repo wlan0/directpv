@@ -26,6 +26,7 @@ import (
 	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta3"
 	"github.com/minio/directpv/pkg/client"
 	"github.com/minio/directpv/pkg/sys"
+	"github.com/minio/directpv/pkg/udev"
 	"github.com/minio/directpv/pkg/uevent"
 	"github.com/minio/directpv/pkg/utils"
 	"k8s.io/klog/v2"
@@ -103,19 +104,19 @@ func (d *driveEventHandler) findMatchingDrive(drives []directcsi.DirectCSIDrive,
 	return nil, errNoMatchFound
 }
 
-func (d *driveEventHandler) Handle(ctx context.Context, device *sys.Device) error {
+func (d *driveEventHandler) Handle(ctx context.Context, udevData *udev.Data) error {
 
-	if sys.LoopRegexp.MatchString(path.Base(event["DEVPATH"])) {
+	if sys.LoopRegexp.MatchString(path.Base(udevData.Path)) {
 		klog.V(5).InfoS(
 			"loopback device is ignored",
-			"ACTION", event["ACTION"],
-			"DEVPATH", event["DEVPATH"])
+			"ACTION", udevData.Action,
+			"DEVPATH", udevData.Path)
 		return nil
 	}
 
-	device, err := d.createDevice(event)
+	device, err := d.createDevice(udevData)
 	if err != nil {
-		klog.ErrorS(err, "ACTION", event["ACTION"], "DEVPATH", event["DEVPATH"])
+		klog.ErrorS(err, "ACTION", udevData.Action, "DEVPATH", udevData.Path)
 		return nil
 	}
 
@@ -133,17 +134,17 @@ func (d *driveEventHandler) Handle(ctx context.Context, device *sys.Device) erro
 	drive, err := d.findMatchingDrive(drives, device)
 	switch {
 	case errors.Is(err, errNoMatchFound):
-		if event["ACTION"] == uevent.Remove {
+		if udevData.Action == udev.EventActionRemove {
 			klog.V(3).InfoS(
 				"matching drive not found",
-				"ACTION", uevent.Remove,
-				"DEVPATH", event["DEVPATH"])
+				"ACTION", udev.EventActionRemove,
+				"DEVPATH", udevData.Path)
 			return nil
 		}
 		return d.add(ctx, device)
 	case err == nil:
-		switch event["ACTION"] {
-		case uevent.Remove:
+		switch udevData.Action {
+		case udev.EventActionRemove:
 			return d.remove(ctx, device, drive)
 		default:
 			return d.update(ctx, device, drive)

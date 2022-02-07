@@ -2,6 +2,8 @@ package uevent
 
 import (
 	"sync"
+
+	"github.com/minio/directpv/pkg/udev"
 )
 
 type queue struct {
@@ -24,7 +26,7 @@ func newQueue() *queue {
 }
 
 // new item goes to end of queue
-func (q *queue) Push(d *deviceEvent) {
+func (q *queue) Push(d *udev.Data) {
 	q.cond.L.Lock()
 	defer func() {
 		q.cond.L.Unlock()
@@ -42,14 +44,14 @@ func (q *queue) Push(d *deviceEvent) {
 }
 
 // we pop from beginning of queue
-func (q *queue) Pop() (d *deviceEvent) {
+func (q *queue) Pop() (d *udev.Data) {
 	q.cond.L.Lock()
 	defer q.cond.L.Unlock()
 
 	for len(q.order) == 0 {
 		q.Cond.Wait()
 	}
-	
+
 	path := q.order[0]
 	q.order = q.order[1:]
 	if item, ok := q.items.LoadAndDelete(path); ok {
