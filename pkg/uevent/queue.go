@@ -17,7 +17,6 @@
 package uevent
 
 import (
-	"fmt"
 	"sync"
 	"time"
 )
@@ -32,7 +31,8 @@ type deviceEvent struct {
 	devPath string
 	action  string
 	backOff time.Duration
-	popped bool
+	popped  bool
+	timer   *time.Timer
 }
 
 func newDeviceEvent(devPath, action string) *deviceEvent {
@@ -41,11 +41,6 @@ func newDeviceEvent(devPath, action string) *deviceEvent {
 		devPath: devPath,
 		action:  action,
 	}
-}
-
-func (d deviceEvent) String() string {
-	return fmt.Sprintf("{created:%v, devPath:%v, action:%v}",
-		d.created, d.devPath, d.action)
 }
 
 type eventQueue struct {
@@ -62,24 +57,9 @@ func newEventQueue() *eventQueue {
 	}
 }
 
-// pkg/node/devicehandler.go
-// type handler interface{
-//   Add()
-//   Update()
-//   Delete()
-// }
-// 
-// pkg/udev/uevent/listener.go
-// ev := q.pop()
-// if err := handle(ev); err != nil {
-//   q.push(ev)
-// }
-// 
 func (e *eventQueue) push(event *deviceEvent) {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
-
-	addBackoff = event.popped
 
 	existingEvent, found := e.events[event.devPath]
 	if found {
@@ -88,11 +68,12 @@ func (e *eventQueue) push(event *deviceEvent) {
 			// skip
 			return
 		}
+
 		// existing event has backoff
 		if existingEvent.timer != nil {
 			// latest event preempts older event
-			if !addBackoff {
-				// if we stopped the timer, and 
+			if !event.popped {
+				// if we stopped the timer, and
 				// prevented the push to keyCh
 				if existingEvent.timer.Stop() {
 					e.keyCh <- event.devPath
@@ -103,7 +84,7 @@ func (e *eventQueue) push(event *deviceEvent) {
 		return
 	}
 
-	if addBackOff {
+	if event.popped {
 		switch event.backOff {
 		case 0:
 			event.backOff = defaultBackOff
@@ -127,7 +108,7 @@ func (e *eventQueue) push(event *deviceEvent) {
 
 func (e *eventQueue) pop() *deviceEvent {
 	key := <-e.keyCh
-	
+
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 
@@ -136,6 +117,6 @@ func (e *eventQueue) pop() *deviceEvent {
 		event.popped = true
 		return event
 	}
-	
+
 	panic("queue should also find event")
 }
