@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -196,9 +195,14 @@ func (l *listener) handle(ctx context.Context, dEvent *deviceEvent) error {
 		}
 	}
 
+	drives, err := l.indexer.List()
+	if err != nil {
+		return err
+	}
+
 	switch dEvent.action {
 	case Add, Change:
-		return l.processUpdate(ctx, device)
+		return process(drives, dEvent.udevData)
 	case Remove:
 		return l.processRemove(ctx, device)
 	default:
@@ -448,6 +452,32 @@ func (l *listener) sync() error {
 		}
 
 		l.eventQueue.push(event)
+	}
+
+	return nil
+}
+
+func updateDrive(drive *directcsi.DirectCSIDrive, device *sys.UDevData) error {
+	// FIXME
+}
+
+func process(drives []*directcsi.DirectCSIDrive, device *sys.UDevData) error {
+	unmatchedDevices := []*sys.UDevData{}
+	matchedDrives, unmatchedDrives := splitByMatch(drives, device)
+	switch len(matchedDrives) {
+	case 0:
+		unmatchedDevices = append(unmatchedDevices, device)
+	case 1:
+		if err := updateDrive(matchedDrives[0], device); err != nil {
+			return err
+		}
+		drives = unmatchedDrives
+	default:
+		return fmt.Errorf("too many drives matched for device %v", device.Path)
+	}
+
+	for _, device := range unmatchedDevices {
+		// FIXME: add new drive
 	}
 
 	return nil

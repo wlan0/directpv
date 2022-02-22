@@ -147,3 +147,19 @@ func (i *indexer) filterDrivesByUEventFSUUID(fsuuid string) ([]*directcsi.Direct
 	}
 	return filteredDrives, nil
 }
+
+func (i *indexer) List() ([]*directcsi.DirectCSIDrive, error) {
+	objects := i.store.List()
+	drives := []*directcsi.DirectCSIDrive{}
+	for _, obj := range objects {
+		directCSIDrive, ok := obj.(*directcsi.DirectCSIDrive)
+		if !ok {
+			return nil, errNotDirectCSIDriveObject
+		}
+		if directCSIDrive.Status.NodeName != i.nodeID {
+			continue
+		}
+		drives = append(drives, directCSIDrive)
+	}
+	return drives, nil
+}
