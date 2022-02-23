@@ -26,6 +26,7 @@ import (
 	"github.com/minio/directpv/pkg/sys"
 	"github.com/minio/directpv/pkg/uevent"
 	"github.com/minio/directpv/pkg/utils"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 )
 
@@ -65,7 +66,25 @@ func (d *driveEventHandler) Add(ctx context.Context, device *sys.Device) error {
 }
 
 func (d *driveEventHandler) Change(ctx context.Context, device *sys.Device, drive *directcsi.DirectCSIDrive) error {
-	return nil
+	var errMessage string
+	updatedDrive, err := d.syncDrive(device, drive)
+	if err != nil {
+		errMessage = err.Error()
+	} else {
+		if drive.Status.Path != updatedDrive.Status.Path {
+			if err := syncVolumeLabels(ctx, updatedDrive); err != nil {
+				return err
+			}
+		}
+	}
+	utils.UpdateCondition(updatedDrive.Status.Conditions,
+		string(directcsi.DirectCSIDriveConditionInitialized),
+		utils.BoolToCondition(errMessage == ""),
+		string(directcsi.DirectCSIDriveReasonInitialized),
+		errMessage)
+
+	_, err = client.GetLatestDirectCSIDriveInterface().Update(ctx, updatedDrive, metav1.UpdateOptions{})
+	return err
 }
 
 func (d *driveEventHandler) Remove(ctx context.Context, device *sys.Device, drive *directcsi.DirectCSIDrive) error {
