@@ -27,6 +27,7 @@ import (
 	"syscall"
 	"time"
 
+	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta3"
 	"github.com/minio/directpv/pkg/sys"
 	"k8s.io/klog/v2"
 )
@@ -57,8 +58,8 @@ var (
 
 type DeviceUEventHandler interface {
 	Add(context.Context, *sys.Device) error
-	Change(context.Context, *sys.Device) error
-	Remove(context.Context, *sys.Device) error
+	Change(context.Context, *sys.Device, *directcsi.DirectCSIDrive) error
+	Remove(context.Context, *sys.Device, *directcsi.DirectCSIDrive) error
 }
 
 type listener struct {
@@ -106,7 +107,7 @@ func Run(ctx context.Context, nodeID string, handler DeviceUEventHandler) error 
 		handler:    handler,
 		eventQueue: newEventQueue(),
 		nodeID:     nodeID,
-		indexer:    newIndexer(ctx, resyncPeriod),
+		indexer:    newIndexer(ctx, nodeID, resyncPeriod),
 	}
 
 	go listener.processEvents(ctx)
@@ -156,52 +157,80 @@ func (l *listener) handle(ctx context.Context, dEvent *deviceEvent) error {
 		return nil
 	}
 
-	name := filepath.Base(udevData.Path)
-	if name == "" {
-		return fmt.Errorf("udevData does not have valid DEVPATH %v", udevData.Path)
+	if dEvent.udevData.Path == "" {
+		return fmt.Errorf("udevData does not have valid DEVPATH %v", dEvent.udevData.Path)
 	}
 
-	device = &sys.Device{
-		Name:         name,
-		Major:        udevData.Major,
-		Minor:        udevData.Minor,
-		Virtual:      strings.Contains(udevData.Path, "/virtual/"),
-		Partition:    udevData.Partition,
-		WWID:         udevData.WWID,
-		Model:        udevData.Model,
-		UeventSerial: udevData.UeventSerial,
-		Vendor:       udevData.Vendor,
-		DMName:       udevData.DMName,
-		DMUUID:       udevData.DMUUID,
-		MDUUID:       udevData.MDUUID,
-		PTUUID:       udevData.PTUUID,
-		PTType:       udevData.PTUUID,
-		PartUUID:     udevData.PartUUID,
-		UeventFSUUID: udevData.UeventFSUUID,
-		FSType:       udevData.FSType,
-		FSUUID:       udevData.FSUUID,
+	device := &sys.Device{
+		Name:         filepath.Base(dEvent.udevData.Path),
+		Major:        dEvent.udevData.Major,
+		Minor:        dEvent.udevData.Minor,
+		Virtual:      strings.Contains(dEvent.udevData.Path, "/virtual/"),
+		Partition:    dEvent.udevData.Partition,
+		WWID:         dEvent.udevData.WWID,
+		Model:        dEvent.udevData.Model,
+		UeventSerial: dEvent.udevData.UeventSerial,
+		Vendor:       dEvent.udevData.Vendor,
+		DMName:       dEvent.udevData.DMName,
+		DMUUID:       dEvent.udevData.DMUUID,
+		MDUUID:       dEvent.udevData.MDUUID,
+		PTUUID:       dEvent.udevData.PTUUID,
+		PTType:       dEvent.udevData.PTType,
+		PartUUID:     dEvent.udevData.PartUUID,
+		UeventFSUUID: dEvent.udevData.UeventFSUUID,
+		FSType:       dEvent.udevData.FSType,
 	}
 
-	if ok := listener.indexer.validateDevice(device); ok {
+	ok, err := l.indexer.validateDevice(device)
+	if err != nil {
+		return err
+	}
+	if ok {
 		return nil
 	}
 
 	if err := device.ProbeHostInfo(); err != nil {
 		// if drive is deleted
-		if !errors.Is(fs.ErrNotExist()) {
+		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
 
 	switch dEvent.action {
-	case Add:
-		return l.handler.Add(ctx, device)
-	case Change:
-		return l.handler.Change(ctx, device, listener.indexer.getDeviceCRD(device))
+	case Add, Change:
+		return l.processUpdate(ctx, device)
 	case Remove:
-		return l.handler.Remove(ctx, device, listener.indexer.getDeviceCRD(device))
+		return l.processRemove(ctx, device)
 	default:
 		return fmt.Errorf("invalid device action: %s", dEvent.action)
+	}
+}
+
+func (l *listener) processUpdate(ctx context.Context, device *sys.Device) error {
+	drive, err := l.indexer.getMatchingDrive(device)
+	switch {
+	case errors.Is(err, errNoMatchFound):
+		return l.handler.Add(ctx, device)
+	case err == nil:
+		return l.handler.Change(ctx, device, drive)
+	default:
+		return err
+	}
+}
+
+func (l *listener) processRemove(ctx context.Context, device *sys.Device) error {
+	drive, err := l.indexer.getMatchingDrive(device)
+	switch {
+	case errors.Is(err, errNoMatchFound):
+		klog.V(3).InfoS(
+			"matching drive not found",
+			"ACTION", Remove,
+			"DEVICE", device.Name)
+		return nil
+	case err == nil:
+		return l.handler.Remove(ctx, device, drive)
+	default:
+		return err
 	}
 }
 
@@ -247,29 +276,17 @@ func (dEvent *deviceEvent) collectUDevData() error {
 	}
 }
 
-func (dEvent *deviceEvent) toDevice() (*sys.Device, error) {
-	switch dEvent.action {
-	case Add, Change:
-		return sys.CreateDevice(dEvent.udevData)
-	case Remove:
-		// Removed device cannot be probed locally
-		return sys.NewDevice(dEvent.udevData)
-	default:
-		return nil, fmt.Errorf("invalid device action: %s", dEvent.action)
-	}
+func errValueMismatch(path, key string, expected, found interface{}) error {
+	return fmt.Errorf(
+		"value mismatch for path %s. expected '%s': %v, received: %v",
+		path,
+		key,
+		expected,
+		found,
+	)
 }
 
 func (dEvent *deviceEvent) fillMissingUdevData(runUdevData *sys.UDevData) error {
-	errValueMismatch := func(path, key string, expected, found interface{}) error {
-		return fmt.Errorf(
-			"value mismatch for path %s. expected '%s': %v, received: %v",
-			path,
-			key,
-			expected,
-			found,
-		)
-	}
-
 	// check for consistent fields
 	if dEvent.udevData.Path != runUdevData.Path {
 		return errValueMismatch(dEvent.udevData.Path, "path", dEvent.udevData.Path, runUdevData.Path)
@@ -301,91 +318,91 @@ func (dEvent *deviceEvent) fillMissingUdevData(runUdevData *sys.UDevData) error 
 		if dEvent.udevData.WWID == "" {
 			dEvent.udevData.WWID = runUdevData.WWID
 		} else if dEvent.udevData.WWID != runUdevData.WWID {
-			return errValueMismatch(dEvent.udevData.WWID, "WWID", dEvent.udevData.WWID, runUdevData.WWID)
+			return errValueMismatch(dEvent.udevData.Path, "WWID", dEvent.udevData.WWID, runUdevData.WWID)
 		}
 	}
 	if runUdevData.Model != "" {
 		if dEvent.udevData.Model == "" {
 			dEvent.udevData.Model = runUdevData.Model
 		} else if dEvent.udevData.Model != runUdevData.Model {
-			return errValueMismatch(dEvent.udevData.Model, "Model", dEvent.udevData.Model, runUdevData.Model)
+			return errValueMismatch(dEvent.udevData.Path, "Model", dEvent.udevData.Model, runUdevData.Model)
 		}
 	}
 	if runUdevData.UeventSerial != "" {
 		if dEvent.udevData.UeventSerial == "" {
 			dEvent.udevData.UeventSerial = runUdevData.UeventSerial
 		} else if dEvent.udevData.UeventSerial != runUdevData.UeventSerial {
-			return errValueMismatch(dEvent.udevData.UeventSerial, "UeventSerial", dEvent.udevData.UeventSerial, runUdevData.UeventSerial)
+			return errValueMismatch(dEvent.udevData.Path, "UeventSerial", dEvent.udevData.UeventSerial, runUdevData.UeventSerial)
 		}
 	}
 	if runUdevData.Vendor != "" {
 		if dEvent.udevData.Vendor == "" {
 			dEvent.udevData.Vendor = runUdevData.Vendor
 		} else if dEvent.udevData.Vendor != runUdevData.Vendor {
-			return errValueMismatch(dEvent.udevData.Vendor, "Vendor", dEvent.udevData.Vendor, runUdevData.Vendor)
+			return errValueMismatch(dEvent.udevData.Path, "Vendor", dEvent.udevData.Vendor, runUdevData.Vendor)
 		}
 	}
 	if runUdevData.DMName != "" {
 		if dEvent.udevData.DMName == "" {
 			dEvent.udevData.DMName = runUdevData.DMName
 		} else if dEvent.udevData.DMName != runUdevData.DMName {
-			return errValueMismatch(dEvent.udevData.DMName, "DMName", dEvent.udevData.DMName, runUdevData.DMName)
+			return errValueMismatch(dEvent.udevData.Path, "DMName", dEvent.udevData.DMName, runUdevData.DMName)
 		}
 	}
 	if runUdevData.DMUUID != "" {
 		if dEvent.udevData.DMUUID == "" {
 			dEvent.udevData.DMUUID = runUdevData.DMUUID
 		} else if dEvent.udevData.DMUUID != runUdevData.DMUUID {
-			return errValueMismatch(dEvent.udevData.DMUUID, "DMUUID", dEvent.udevData.DMUUID, runUdevData.DMUUID)
+			return errValueMismatch(dEvent.udevData.Path, "DMUUID", dEvent.udevData.DMUUID, runUdevData.DMUUID)
 		}
 	}
 	if runUdevData.MDUUID != "" {
 		if dEvent.udevData.MDUUID == "" {
 			dEvent.udevData.MDUUID = runUdevData.MDUUID
 		} else if dEvent.udevData.MDUUID != runUdevData.MDUUID {
-			return errValueMismatch(dEvent.udevData.MDUUID, "MDUUID", dEvent.udevData.MDUUID, runUdevData.MDUUID)
+			return errValueMismatch(dEvent.udevData.Path, "MDUUID", dEvent.udevData.MDUUID, runUdevData.MDUUID)
 		}
 	}
 	if runUdevData.PTUUID != "" {
 		if dEvent.udevData.PTUUID == "" {
 			dEvent.udevData.PTUUID = runUdevData.PTUUID
 		} else if dEvent.udevData.PTUUID != runUdevData.PTUUID {
-			return errValueMismatch(dEvent.udevData.PTUUID, "PTUUID", dEvent.udevData.PTUUID, runUdevData.PTUUID)
+			return errValueMismatch(dEvent.udevData.Path, "PTUUID", dEvent.udevData.PTUUID, runUdevData.PTUUID)
 		}
 	}
 	if runUdevData.PTType != "" {
 		if dEvent.udevData.PTType == "" {
 			dEvent.udevData.PTType = runUdevData.PTType
 		} else if dEvent.udevData.PTType != runUdevData.PTType {
-			return errValueMismatch(dEvent.udevData.PTType, "PTType", dEvent.udevData.PTType, runUdevData.PTType)
+			return errValueMismatch(dEvent.udevData.Path, "PTType", dEvent.udevData.PTType, runUdevData.PTType)
 		}
 	}
 	if runUdevData.PartUUID != "" {
 		if dEvent.udevData.PartUUID == "" {
 			dEvent.udevData.PartUUID = runUdevData.PartUUID
 		} else if dEvent.udevData.PartUUID != runUdevData.PartUUID {
-			return errValueMismatch(dEvent.udevData.PartUUID, "PartUUID", dEvent.udevData.PartUUID, runUdevData.PartUUID)
+			return errValueMismatch(dEvent.udevData.Path, "PartUUID", dEvent.udevData.PartUUID, runUdevData.PartUUID)
 		}
 	}
 	if runUdevData.UeventFSUUID != "" {
 		if dEvent.udevData.UeventFSUUID == "" {
 			dEvent.udevData.UeventFSUUID = runUdevData.UeventFSUUID
 		} else if dEvent.udevData.UeventFSUUID != runUdevData.UeventFSUUID {
-			return errValueMismatch(dEvent.udevData.UeventFSUUID, "UeventFSUUID", dEvent.udevData.UeventFSUUID, runUdevData.UeventFSUUID)
+			return errValueMismatch(dEvent.udevData.Path, "UeventFSUUID", dEvent.udevData.UeventFSUUID, runUdevData.UeventFSUUID)
 		}
 	}
 	if runUdevData.FSType != "" {
 		if dEvent.udevData.FSType == "" {
 			dEvent.udevData.FSType = runUdevData.FSType
 		} else if dEvent.udevData.FSType != runUdevData.FSType {
-			return errValueMismatch(dEvent.udevData.FSType, "FSType", dEvent.udevData.FSType, runUdevData.FSType)
+			return errValueMismatch(dEvent.udevData.Path, "FSType", dEvent.udevData.FSType, runUdevData.FSType)
 		}
 	}
 	if runUdevData.FSUUID != "" {
 		if dEvent.udevData.FSUUID == "" {
 			dEvent.udevData.FSUUID = runUdevData.FSUUID
 		} else if dEvent.udevData.FSUUID != runUdevData.FSUUID {
-			return errValueMismatch(dEvent.udevData.FSUUID, "FSUUID", dEvent.udevData.FSUUID, runUdevData.FSUUID)
+			return errValueMismatch(dEvent.udevData.Path, "FSUUID", dEvent.udevData.FSUUID, runUdevData.FSUUID)
 		}
 	}
 

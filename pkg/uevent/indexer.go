@@ -17,32 +17,133 @@
 package uevent
 
 import (
+	"context"
+	"errors"
 	"time"
 
-	"github.com/kubernetes/client-go/tools/cache"
+	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta3"
+	"github.com/minio/directpv/pkg/client"
+	"github.com/minio/directpv/pkg/sys"
+	"k8s.io/client-go/tools/cache"
+)
+
+var (
+	errNotDirectCSIDriveObject = errors.New("not a directcsidrive object")
+	errNoMatchFound            = errors.New("no matching drive found")
 )
 
 type indexer struct {
-	store cache.Store
+	store  cache.Store
+	nodeID string
 }
 
-func newIndexer(ctx context.Context, resyncPeriod time.Duration) *indexer {
+func newIndexer(ctx context.Context, nodeID string, resyncPeriod time.Duration) *indexer {
 	store := cache.NewStore(cache.DeletionHandlingMetaNamespaceKeyFunc)
 
-	lw := utils.DrivesListerWatcher(nodeID)
+	lw := client.DrivesListerWatcher(nodeID)
 	reflector := cache.NewReflector(lw, &directcsi.DirectCSIDrive{}, store, resyncPeriod)
 
 	go reflector.Run(ctx.Done())
-	
+
 	return &indexer{
-		store: store,
+		store:  store,
+		nodeID: nodeID,
 	}
 }
 
 func (i *indexer) validateDevice(device *sys.Device) (bool, error) {
-	
+	if device.UeventFSUUID == "" {
+		return false, nil
+	}
+
+	filteredDrives, err := i.filterDrivesByUEventFSUUID(device.UeventFSUUID)
+	if err != nil {
+		return false, err
+	}
+
+	if len(filteredDrives) != 1 {
+		// To-Do: handle if more than one drive is found for a given path and node
+		return false, nil
+	}
+
+	directCSIDrive := filteredDrives[0]
+
+	if directCSIDrive.Status.Path != device.DevPath() {
+		return false, nil
+	}
+	if directCSIDrive.Status.MajorNumber != uint32(device.Major) {
+		return false, nil
+	}
+	if directCSIDrive.Status.MinorNumber != uint32(device.Minor) {
+		return false, nil
+	}
+	if directCSIDrive.Status.Virtual != device.Virtual {
+		return false, nil
+	}
+	if directCSIDrive.Status.PartitionNum != device.Partition {
+		return false, nil
+	}
+	if directCSIDrive.Status.WWID != device.WWID {
+		return false, nil
+	}
+	if directCSIDrive.Status.ModelNumber != device.Model {
+		return false, nil
+	}
+	if directCSIDrive.Status.UeventSerial != device.UeventSerial {
+		return false, nil
+	}
+	if directCSIDrive.Status.Vendor != device.Vendor {
+		return false, nil
+	}
+	if directCSIDrive.Status.DMName != device.DMName {
+		return false, nil
+	}
+	if directCSIDrive.Status.DMUUID != device.DMUUID {
+		return false, nil
+	}
+	if directCSIDrive.Status.MDUUID != device.MDUUID {
+		return false, nil
+	}
+	if directCSIDrive.Status.PartTableUUID != device.PTUUID {
+		return false, nil
+	}
+	if directCSIDrive.Status.PartTableType != device.PTType {
+		return false, nil
+	}
+	if directCSIDrive.Status.PartitionUUID != device.PartUUID {
+		return false, nil
+	}
+	if directCSIDrive.Status.Filesystem != device.FSType {
+		return false, nil
+	}
+
+	return true, nil
 }
 
-func (i *indexer) getDeviceCRD(device *sys.Device) (*directcsi.DirectCSIDrive, error) {
+func (i *indexer) getMatchingDrive(device *sys.Device) (*directcsi.DirectCSIDrive, error) {
+	filteredDrives, err := i.filterDrivesByUEventFSUUID(device.UeventFSUUID)
+	if err != nil {
+		return nil, err
+	}
+	// To-Do/Fix-me: run matching algorithm to find matching drive
+	return filteredDrives[0], errNoMatchFound
+}
 
+func (i *indexer) filterDrivesByUEventFSUUID(fsuuid string) ([]*directcsi.DirectCSIDrive, error) {
+	objects := i.store.List()
+	filteredDrives := []*directcsi.DirectCSIDrive{}
+	for _, obj := range objects {
+		directCSIDrive, ok := obj.(*directcsi.DirectCSIDrive)
+		if !ok {
+			return nil, errNotDirectCSIDriveObject
+		}
+		if directCSIDrive.Status.NodeName != i.nodeID {
+			continue
+		}
+		if directCSIDrive.Status.UeventFSUUID != fsuuid {
+			continue
+		}
+		filteredDrives = append(filteredDrives, directCSIDrive)
+	}
+	return filteredDrives, nil
 }
