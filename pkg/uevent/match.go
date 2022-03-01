@@ -25,31 +25,40 @@ import (
 	"github.com/minio/directpv/pkg/sys"
 )
 
-type matchFn func(device *sys.Device, drive *directcsi.DirectCSIDrive) (match bool, cont bool)
+type matchFn func(device *sys.Device, drive *directcsi.DirectCSIDrive) (match bool, consider bool, err error)
 
 var (
 	errNoMatchFound = errors.New("no matching drive found")
 )
 
 var matchers = []matchFn{
-	fsUUIDMatcher,
-	ueventFSUUIDMatcher,
-	serialNumberMatcher,
+	// v1beta3 matchers
+	// HWInfoMatchers (conclusive)
+	partitionNumberMatcher,
 	ueventSerialNumberMatcher,
 	wwidMatcher,
 	modelNumberMatcher,
 	vendorMatcher,
-	//partitionNumberMatcher,
+	// If there are more than one matching drive, continue.. else conclude
+	// SWInfoMatchers (non conclusive)
+	partitionTableUUIDMatcher,
+	partitionUUIDMatcher,
 	dmUUIDMatcher,
 	mdUUIDMatcher,
-	partitionUUIDMatcher,
-	partitionTableUUIDMatcher,
-	// logicalBlocksizeMatcher,
+	//filesystemMatcher,
+	ueventFSUUIDMatcher,
+
+	// // If there are more than one matching drive, continue.. else conclude
+	// // v1beta2 conclusive matchers
+	fsUUIDMatcher,
+	serialNumberMatcher,
+
+	// // If there are more than one matching drive, continue.. else conclude
+	// // v1beta1 conclusive matchers
+	logicalBlocksizeMatcher,
 	// physicalBlocksizeMatcher,
-	// filesystemMatcher,
 	// totalCapacityMatcher,
 	// allocatedCapacityMatcher,
-	// mountMatcher,
 }
 
 func runMatcher(device *sys.Device, drives []*directcsi.DirectCSIDrive) (*directcsi.DirectCSIDrive, error) {
@@ -78,7 +87,7 @@ func getMatchingDrives(device *sys.Device, drives []*directcsi.DirectCSIDrive) (
 	for _, drive := range drives {
 		var matchedFn []matchFn
 		for _, matchFn := range matchers {
-			match, cont := matchFn(device, drive)
+			match, cont, _ := matchFn(device, drive)
 			if cont {
 				continue
 			}
@@ -102,68 +111,90 @@ func isDOSPTType(ptType string) bool {
 	}
 }
 
-func fsUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	return genericMatcher(drive.Status.FilesystemUUID, device.FSUUID)
+func partitionNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	return drive.Status.PartitionNum == device.Partition, false, nil
 }
 
-func ueventFSUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	return genericMatcher(drive.Status.UeventFSUUID, device.UeventFSUUID)
-}
-
-func serialNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	return genericMatcher(drive.Status.SerialNumber, device.Serial)
-}
-
-func ueventSerialNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	return genericMatcher(drive.Status.UeventSerial, device.UeventSerial)
-}
-
-func wwidMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	matched = drive.Status.WWID == "" || drive.Status.WWID == device.WWID
-	return matched, matched
-}
-
-func modelNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	return genericMatcher(drive.Status.ModelNumber, device.Model)
-}
-
-func vendorMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	return genericMatcher(drive.Status.Vendor, device.Vendor)
-}
-
-func dmUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	matched = drive.Status.DMUUID == "" || drive.Status.DMUUID == device.DMUUID
-	return matched, matched
-}
-
-func mdUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	matched = drive.Status.MDUUID == "" || drive.Status.MDUUID == device.MDUUID
-	return matched, matched
-}
-
-func partitionUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	matched = drive.Status.PartitionUUID == "" || drive.Status.PartitionUUID == device.PartUUID
-	return matched, matched
-}
-
-func partitionTableUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (matched, cont bool) {
-	matched = drive.Status.PartTableUUID == "" || drive.Status.PartTableUUID == device.PTUUID ||
-		drive.Status.PartTableType == "" || ptTypeEqual(drive.Status.PartTableType, device.PTType)
-	return matched, matched
-}
-
-// if alpha is empty, return false, true
-// if alpha is not empty and matches beta, then return true, true
-// if alpha is not empty and does not match beta, then return false, false
-func genericMatcher(alpha, beta string) (matched, cont bool) {
-	if alpha == "" {
-		cont = true
-	} else {
-		matched = alpha == beta
-		cont = matched
+func ueventSerialNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.UeventSerial == "" {
+		return false, true, nil
 	}
-	return matched, cont
+	return drive.Status.UeventSerial == device.UeventSerial, false, nil
+}
 
+func wwidMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.WWID == "" {
+		return false, true, nil
+	}
+	return drive.Status.WWID == device.WWID, false, nil
+}
+
+func modelNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.ModelNumber == "" {
+		return false, true, nil
+	}
+	return drive.Status.ModelNumber == device.Model, false, nil
+}
+
+func vendorMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.Vendor == "" {
+		return false, true, nil
+	}
+	return drive.Status.Vendor == device.Vendor, false, nil
+}
+
+func partitionTableUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.PartTableUUID == "" || drive.Status.PartTableType == "" {
+		return false, true, nil
+	}
+	return drive.Status.PartTableUUID == device.PTUUID &&
+		ptTypeEqual(drive.Status.PartTableType, device.PTType), false, nil
+}
+
+func partitionUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.PartitionUUID == "" {
+		return false, true, nil
+	}
+	return drive.Status.PartitionUUID == device.PartUUID, false, nil
+}
+
+func dmUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.DMUUID == "" {
+		return false, true, nil
+	}
+	return drive.Status.DMUUID == device.DMUUID, false, nil
+}
+
+func mdUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.MDUUID == "" {
+		return false, true, nil
+	}
+	return drive.Status.MDUUID == device.MDUUID, false, nil
+}
+
+func ueventFSUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.UeventFSUUID == "" {
+		return false, true, nil
+	}
+	return drive.Status.UeventFSUUID == device.UeventFSUUID, false, nil
+}
+
+func fsUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.FilesystemUUID == "" {
+		return false, true, nil
+	}
+	return drive.Status.FilesystemUUID == device.FSUUID, false, nil
+}
+
+func serialNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	if drive.Status.SerialNumber == "" {
+		return false, true, nil
+	}
+	return drive.Status.SerialNumber == device.Serial, false, nil
+}
+
+func logicalBlocksizeMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	return drive.Status.LogicalBlockSize == int64(device.LogicalBlockSize), false, nil
 }
 
 func ptTypeEqual(ptType1, ptType2 string) bool {
