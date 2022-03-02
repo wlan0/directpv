@@ -19,7 +19,6 @@ package uevent
 import (
 	"errors"
 	"fmt"
-	"strings"
 
 	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta3"
 	"github.com/minio/directpv/pkg/sys"
@@ -41,7 +40,7 @@ var matchers = []matchFn{
 	vendorMatcher,
 	// If there are more than one matching drive, continue.. else conclude
 	// SWInfoMatchers (non conclusive)
-	partitionTableUUIDMatcher,
+	//partitionTableUUIDMatcher,
 	partitionUUIDMatcher,
 	dmUUIDMatcher,
 	mdUUIDMatcher,
@@ -116,95 +115,213 @@ func partitionNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive)
 }
 
 func ueventSerialNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.UeventSerial == "" {
-		return false, true, nil
-	}
-	return drive.Status.UeventSerial == device.UeventSerial, false, nil
+	return immutablePropertyMatcher(device.UeventSerial, drive.Status.UeventSerial)
 }
 
 func wwidMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.WWID == "" {
-		return false, true, nil
-	}
-	return drive.Status.WWID == device.WWID, false, nil
+	return immutablePropertyMatcher(device.WWID, drive.Status.WWID)
 }
 
 func modelNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.ModelNumber == "" {
-		return false, true, nil
-	}
-	return drive.Status.ModelNumber == device.Model, false, nil
+	return immutablePropertyMatcher(device.Model, drive.Status.ModelNumber)
 }
 
 func vendorMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.Vendor == "" {
-		return false, true, nil
-	}
-	return drive.Status.Vendor == device.Vendor, false, nil
-}
-
-func partitionTableUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.PartTableUUID == "" || drive.Status.PartTableType == "" {
-		return false, true, nil
-	}
-	return drive.Status.PartTableUUID == device.PTUUID &&
-		ptTypeEqual(drive.Status.PartTableType, device.PTType), false, nil
+	return immutablePropertyMatcher(device.Vendor, drive.Status.Vendor)
 }
 
 func partitionUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.PartitionUUID == "" {
-		return false, true, nil
-	}
-	return drive.Status.PartitionUUID == device.PartUUID, false, nil
+	return immutablePropertyMatcher(device.PartUUID, drive.Status.PartitionUUID)
 }
 
 func dmUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.DMUUID == "" {
-		return false, true, nil
-	}
-	return drive.Status.DMUUID == device.DMUUID, false, nil
+	return immutablePropertyMatcher(device.DMUUID, drive.Status.DMUUID)
 }
 
 func mdUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.MDUUID == "" {
-		return false, true, nil
-	}
-	return drive.Status.MDUUID == device.MDUUID, false, nil
-}
-
-func ueventFSUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.UeventFSUUID == "" {
-		return false, true, nil
-	}
-	return drive.Status.UeventFSUUID == device.UeventFSUUID, false, nil
-}
-
-func fsUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.FilesystemUUID == "" {
-		return false, true, nil
-	}
-	return drive.Status.FilesystemUUID == device.FSUUID, false, nil
+	return immutablePropertyMatcher(device.MDUUID, drive.Status.MDUUID)
 }
 
 func serialNumberMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	if drive.Status.SerialNumber == "" {
-		return false, true, nil
+	return immutablePropertyMatcher(device.Serial, drive.Status.SerialNumber)
+}
+
+func serialNumberLongMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	return immutablePropertyMatcher(device.SerialLong, drive.Status.SerialNumberLong)
+}
+
+func pciPathMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	return immutablePropertyMatcher(device.PCIPath, drive.Status.PCIPath)
+}
+
+// Refer https://go.dev/play/p/zuaURPArfcL
+// ###################################### Truth table Hardware Matcher ####################################
+//	| alpha | beta |				Match 						|			Not-Match 					  |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   0	|   0  |	match=false, consider=true, err = nil   | 			XXXXXXX 					  |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   0	|   1  |				XXXXXXX     	            | match=false, consider=false, err = nil  |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   1	|   0  |	match=false, consider=true, err = nil   | 			XXXXXXX 					  |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   1	|   1  |	match=true, consider=false, err = nil   | match=false, consider=false, err = nil  |
+//  |-------|------|--------------------------------------------|-----------------------------------------|
+
+func immutablePropertyMatcher(alpha string, beta string) (bool, bool, error) {
+	var match, consider bool
+	var err error
+	switch {
+	case alpha == "" && beta == "":
+		consider = true
+	case alpha == "" && beta != "":
+	case alpha != "" && beta == "":
+		consider = true
+	case alpha != "" && beta != "":
+		if alpha == beta {
+			match = true
+		}
 	}
-	return drive.Status.SerialNumber == device.Serial, false, nil
+	return match, consider, err
+
+}
+
+func ueventFSUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	return fsPropertyMatcher(device.UeventFSUUID, drive.Status.UeventFSUUID)
+}
+
+func fsTypeMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	return fsPropertyMatcher(device.FSType, drive.Status.Filesystem)
+}
+
+func fsUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	return fsPropertyMatcher(device.FSUUID, drive.Status.FilesystemUUID)
+}
+
+// Refer https://go.dev/play/p/zuaURPArfcL
+// ###################################### Truth table Hardware Matcher ####################################
+//	| alpha | beta |				Match 						|			Not-Match 					  |
+//	|-------|------|--------------------------------------------|------------------------------------------
+// 	|   0	|   0  |	match=false, consider=true, err = nil   | 			XXXXXXX 					  |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   0	|   1  |	match=false, consider=true, err = nil   | 			XXXXXXX 					  |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   1	|   0  |	match=false, consider=true, err = nil   | 			XXXXXXX 					  |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   1	|   1  |	match=true, consider=false, err = nil   | match=false, consider=true , err = nil  |
+//  |-------|------|--------------------------------------------|------------------------------------------
+
+func fsPropertyMatcher(alpha string, beta string) (bool, bool, error) {
+	var match, consider bool
+	var err error
+	switch {
+	case alpha == "" && beta == "":
+		consider = true
+	case alpha == "" && beta != "":
+		consider = true
+	case alpha != "" && beta == "":
+		consider = true
+	case alpha != "" && beta != "":
+		if alpha == beta {
+			match = true
+		} else {
+			consider = true
+		}
+	}
+	return match, consider, err
 }
 
 func logicalBlocksizeMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
-	return drive.Status.LogicalBlockSize == int64(device.LogicalBlockSize), false, nil
+	return sizeMatcher(int64(device.LogicalBlockSize), drive.Status.LogicalBlockSize)
 }
 
-func ptTypeEqual(ptType1, ptType2 string) bool {
-	ptType1, ptType2 = strings.ToLower(ptType1), strings.ToLower(ptType2)
-	switch {
-	case ptType1 == ptType2:
-		return true
-	case isDOSPTType(ptType1) && isDOSPTType(ptType2):
-		return true
-	default:
-		return false
-	}
+func totalCapacityMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	return sizeMatcher(int64(device.TotalCapacity), drive.Status.TotalCapacity)
 }
+
+func sizeMatcher(alpha int64, beta int64) (bool, bool, error) {
+	var match, consider bool
+	var err error
+	switch {
+	case alpha == 0 && beta == 0:
+		consider = true
+	case alpha == 0 && beta != 0:
+		consider = true
+	case alpha != 0 && beta == 0:
+		consider = true
+	case alpha != 0 && beta != 0:
+		if alpha == beta {
+			match = true
+		} else {
+			consider = true
+		}
+	}
+	return match, consider, err
+}
+
+// Refer https://go.dev/play/p/zuaURPArfcL
+// ###################################### Truth table Hardware Matcher ####################################
+//	| alpha | beta |				Match 						|			Not-Match 					  |
+//	|-------|------|--------------------------------------------|------------------------------------------
+// 	|   0	|   0  |	match=false, consider=true, err = nil   | 			XXXXXXX 					  |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   0	|   1  |				XXXXXXX           			| match=false, consider=true, err = nil   |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   1	|   0  |				XXXXXXX 					| match=false, consider=true, err = nil   |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   1	|   1  |	match=true, consider=false, err = nil   | match=false, consider=fals , err = nil  |
+//  |-------|------|--------------------------------------------|-----------------------------------------|
+
+func physicalBlocksizeMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	var match, consider bool
+	var err error
+	switch {
+	case int64(device.PhysicalBlockSize) == 0 && drive.Status.PhysicalBlockSize == 0:
+		consider = true
+	case int64(device.PhysicalBlockSize) == 0 && drive.Status.PhysicalBlockSize != 0:
+		consider = true
+	case int64(device.PhysicalBlockSize) != 0 && drive.Status.PhysicalBlockSize == 0:
+		consider = true
+	case int64(device.PhysicalBlockSize) != 0 && drive.Status.PhysicalBlockSize != 0:
+		if int64(device.PhysicalBlockSize) == drive.Status.PhysicalBlockSize {
+			match = true
+		}
+	}
+	return match, consider, err
+}
+
+// Refer https://go.dev/play/p/zuaURPArfcL
+// ###################################### Truth table Hardware Matcher ####################################
+//	| alpha | beta |				Match 						|			Not-Match 					  |
+//	|-------|------|--------------------------------------------|------------------------------------------
+// 	|   0	|   0  |	match=false, consider=true, err = nil   | 			XXXXXXX 					  |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   0	|   1  |				XXXXXXX           			| match=false, consider=true, err = nil   |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   1	|   0  |				XXXXXXX 					| match=false, consider=true, err = nil   |
+//	|-------|------|--------------------------------------------|-----------------------------------------|
+// 	|   1	|   1  |	match=true, consider=false, err = nil   | match=false, consider=true , err = nil  |
+//  |-------|------|--------------------------------------------|-----------------------------------------|
+
+// func partitionTableUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+// 	if drive.Status.PartTableUUID == "" || drive.Status.PartTableType == "" {
+// 		return false, true, nil
+// 	}
+// 	return drive.Status.PartTableUUID == device.PTUUID &&
+// 		ptTypeEqual(drive.Status.PartTableType, device.PTType), false, nil
+// }
+
+// func logicalBlocksizeMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+// 	return drive.Status.LogicalBlockSize == int64(device.LogicalBlockSize), false, nil
+// }
+
+// func ptTypeEqual(ptType1, ptType2 string) bool {
+// 	ptType1, ptType2 = strings.ToLower(ptType1), strings.ToLower(ptType2)
+// 	switch {
+// 	case ptType1 == ptType2:
+// 		return true
+// 	case isDOSPTType(ptType1) && isDOSPTType(ptType2):
+// 		return true
+// 	default:
+// 		return false
+// 	}
+// }
