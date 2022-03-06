@@ -18,9 +18,11 @@ package uevent
 
 import (
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 
-	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta3"
+	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta4"
 	"github.com/minio/directpv/pkg/sys"
 )
 
@@ -92,6 +94,20 @@ func validateDevice(device *sys.Device, filteredDrives []*directcsi.DirectCSIDri
 	}
 	if directCSIDrive.Status.Filesystem != device.FSType {
 		return false
+	}
+
+	if len(device.MountInfos) > 0 {
+		if directCSIDrive.Status.Mountpoint != device.MountInfos[0].MountPoint {
+			return false
+		}
+		deviceMountOptions := device.MountInfos[0].MountOptions
+		sort.Strings(deviceMountOptions)
+		driveMountOptions := directCSIDrive.Status.MountOptions
+		sort.Strings(driveMountOptions)
+		if !reflect.DeepEqual(deviceMountOptions, driveMountOptions) {
+			return false
+		}
+
 	}
 
 	return true
