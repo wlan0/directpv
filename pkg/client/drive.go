@@ -22,7 +22,7 @@ import (
 	"path"
 	"strings"
 
-	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta3"
+	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta4"
 	"github.com/minio/directpv/pkg/mount"
 	"github.com/minio/directpv/pkg/sys"
 	"github.com/minio/directpv/pkg/utils"
@@ -61,6 +61,15 @@ func NewDirectCSIDriveStatus(device *sys.Device, nodeID string, topology map[str
 		formatted = metav1.ConditionTrue
 	}
 
+	var otherMounts []directcsi.OtherMountsInfo
+	for i := 1; i < len(device.MountInfos); i++ {
+		otherMountInfo := directcsi.OtherMountsInfo{
+			Mountpoint:   device.MountInfos[i].MountPoint,
+			MountOptions: device.MountInfos[i].MountOptions,
+		}
+		otherMounts = append(otherMounts, otherMountInfo)
+	}
+
 	return directcsi.DirectCSIDriveStatus{
 		AccessTier:        directcsi.AccessTierUnknown,
 		DriveStatus:       driveStatus,
@@ -97,6 +106,10 @@ func NewDirectCSIDriveStatus(device *sys.Device, nodeID string, topology map[str
 		Partitioned:       device.Partitioned,
 		SwapOn:            device.SwapOn,
 		Master:            device.Master,
+		OtherMountsInfo:   otherMounts,
+		SerialNumberLong:  device.SerialLong,
+		PCIPath:           device.PCIPath,
+
 		Conditions: []metav1.Condition{
 			{
 				Type:               string(directcsi.DirectCSIDriveConditionOwned),

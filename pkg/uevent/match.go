@@ -17,7 +17,7 @@
 package uevent
 
 import (
-	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta3"
+	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta4"
 	"github.com/minio/directpv/pkg/sys"
 	"k8s.io/klog/v2"
 )
@@ -40,6 +40,7 @@ var stageOneMatchers = []matchFn{
 	// HW matchers
 	partitionNumberMatcher,
 	ueventSerialNumberMatcher,
+	serialNumberLongMatcher,
 	wwidMatcher,
 	modelNumberMatcher,
 	vendorMatcher,
@@ -63,6 +64,7 @@ var stageOneMatchers = []matchFn{
 var stageTwoMatchers = []matchFn{
 	majMinMatcher,
 	pathMatcher,
+	pciPathMatcher,
 }
 
 // ------------------------
@@ -145,6 +147,13 @@ func pathMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (match boo
 	return true, true, nil
 }
 
+func pciPathMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (match bool, consider bool, err error) {
+	if drive.Status.PCIPath != device.PCIPath {
+		return false, false, nil
+	}
+	return true, true, nil
+}
+
 // ------------------------
 // - Run the list of drives over the provided match function
 // - If matched, append the drive to the matched list
@@ -205,6 +214,10 @@ func mdUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, b
 
 func partitionTableUUIDMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
 	return immutablePropertyMatcher(device.PartUUID, drive.Status.PartTableUUID)
+}
+
+func serialNumberLongMatcher(device *sys.Device, drive *directcsi.DirectCSIDrive) (bool, bool, error) {
+	return immutablePropertyMatcher(device.SerialLong, drive.Status.SerialNumberLong)
 }
 
 // Refer https://go.dev/play/p/zuaURPArfcL

@@ -18,10 +18,12 @@ package uevent
 
 import (
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 
-	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta3"
+	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta4"
 	"github.com/minio/directpv/pkg/sys"
 )
 
@@ -50,22 +52,24 @@ func mapToUdevData(eventMap map[string]string) (*sys.UDevData, error) {
 	}
 
 	return &sys.UDevData{
-		Path:         path,
-		Major:        major,
-		Minor:        minor,
-		Partition:    partition,
-		WWID:         eventMap["ID_WWN"],
-		Model:        eventMap["ID_MODEL"],
-		UeventSerial: eventMap["ID_SERIAL_SHORT"],
-		Vendor:       eventMap["ID_VENDOR"],
-		DMName:       eventMap["DM_NAME"],
-		DMUUID:       eventMap["DM_UUID"],
-		MDUUID:       sys.NormalizeUUID(eventMap["MD_UUID"]),
-		PTUUID:       eventMap["ID_PART_TABLE_UUID"],
-		PTType:       eventMap["ID_PART_TABLE_TYPE"],
-		PartUUID:     eventMap["ID_PART_ENTRY_UUID"],
-		UeventFSUUID: eventMap["ID_FS_UUID"],
-		FSType:       eventMap["ID_FS_TYPE"],
+		Path:             path,
+		Major:            major,
+		Minor:            minor,
+		Partition:        partition,
+		WWID:             eventMap["ID_WWN"],
+		Model:            eventMap["ID_MODEL"],
+		UeventSerial:     eventMap["ID_SERIAL_SHORT"],
+		Vendor:           eventMap["ID_VENDOR"],
+		DMName:           eventMap["DM_NAME"],
+		DMUUID:           eventMap["DM_UUID"],
+		MDUUID:           sys.NormalizeUUID(eventMap["MD_UUID"]),
+		PTUUID:           eventMap["ID_PART_TABLE_UUID"],
+		PTType:           eventMap["ID_PART_TABLE_TYPE"],
+		PartUUID:         eventMap["ID_PART_ENTRY_UUID"],
+		UeventFSUUID:     eventMap["ID_FS_UUID"],
+		FSType:           eventMap["ID_FS_TYPE"],
+		PCIPath:          eventMap["ID_PATH"],
+		UeventSerialLong: eventMap["ID_SERIAL"],
 	}, nil
 }
 
@@ -137,6 +141,20 @@ func validateDevice(device *sys.Device, filteredDrives []*directcsi.DirectCSIDri
 	}
 	if directCSIDrive.Status.Filesystem != device.FSType {
 		return false
+	}
+
+	if len(device.MountInfos) > 0 {
+		if directCSIDrive.Status.Mountpoint != device.MountInfos[0].MountPoint {
+			return false
+		}
+		deviceMountOptions := device.MountInfos[0].MountOptions
+		sort.Strings(deviceMountOptions)
+		driveMountOptions := directCSIDrive.Status.MountOptions
+		sort.Strings(driveMountOptions)
+		if !reflect.DeepEqual(deviceMountOptions, driveMountOptions) {
+			return false
+		}
+
 	}
 
 	return true

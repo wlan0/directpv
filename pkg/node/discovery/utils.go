@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta3"
+	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta4"
 	"github.com/minio/directpv/pkg/mount"
 	"github.com/minio/directpv/pkg/sys"
 	"github.com/minio/directpv/pkg/utils"
@@ -123,7 +123,7 @@ func syncDriveStatesOnDiscovery(existingObj *directcsi.DirectCSIDrive, localDriv
 }
 
 func (d *Discovery) syncDrive(ctx context.Context, localDrive *directcsi.DirectCSIDrive) error {
-	directCSIClient := d.directcsiClient.DirectV1beta3()
+	directCSIClient := d.directcsiClient.DirectV1beta4()
 	driveClient := directCSIClient.DirectCSIDrives()
 
 	driveSync := func() error {
@@ -166,7 +166,7 @@ func (d *Discovery) syncDrive(ctx context.Context, localDrive *directcsi.DirectC
 }
 
 func (d *Discovery) deleteUnmatchedRemoteDrives(ctx context.Context) error {
-	directCSIClient := d.directcsiClient.DirectV1beta3()
+	directCSIClient := d.directcsiClient.DirectV1beta4()
 	driveClient := directCSIClient.DirectCSIDrives()
 
 	for _, remoteDrive := range d.remoteDrives {

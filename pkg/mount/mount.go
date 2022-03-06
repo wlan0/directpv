@@ -17,6 +17,7 @@
 package mount
 
 import (
+	"fmt"
 	"os"
 
 	"k8s.io/klog/v2"
@@ -60,4 +61,9 @@ func MountXFSDevice(device, target string, flags []string) error {
 
 	klog.V(3).InfoS("mounting device", "device", device, "target", target)
 	return SafeMount(device, target, "xfs", flags, "prjquota")
+}
+
+// MajorMinor provides the identifier for a drive based on Major and Minor number
+func MajorMinor(major, minor int) string {
+	return fmt.Sprintf("%v:%v", major, minor)
 }

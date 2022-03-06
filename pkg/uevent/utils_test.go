@@ -20,7 +20,7 @@ import (
 	"reflect"
 	"testing"
 
-	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta3"
+	directcsi "github.com/minio/directpv/pkg/apis/direct.csi.min.io/v1beta4"
 	"github.com/minio/directpv/pkg/sys"
 	"github.com/minio/directpv/pkg/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,25 +44,29 @@ func TestMapToEventData(t *testing.T) {
 		"ID_PART_ENTRY_UUID":   "ID_PART_ENTRY_UUID",
 		"ID_FS_UUID":           "ID_FS_UUID",
 		"ID_FS_TYPE":           "ID_FS_TYPE",
+		"ID_PATH":              "ID_PATH",
+		"ID_SERIAL":            "ID_SERIAL",
 	}
 
 	expectedUEventData := &sys.UDevData{
-		Path:         "/devices/virtual/block/loop7",
-		Major:        7,
-		Minor:        0,
-		Partition:    7,
-		WWID:         "WWN",
-		Model:        "ID_MODEL",
-		UeventSerial: "ID_SERIAL_SHORT",
-		Vendor:       "ID_VENDOR",
-		DMName:       "DM_NAME",
-		DMUUID:       "DM_UUID",
-		MDUUID:       "MDUUID",
-		PTUUID:       "ID_PART_TABLE_UUID",
-		PTType:       "ID_PART_TABLE_TYPE",
-		PartUUID:     "ID_PART_ENTRY_UUID",
-		UeventFSUUID: "ID_FS_UUID",
-		FSType:       "ID_FS_TYPE",
+		Path:             "/devices/virtual/block/loop7",
+		Major:            7,
+		Minor:            0,
+		Partition:        7,
+		WWID:             "WWN",
+		Model:            "ID_MODEL",
+		UeventSerial:     "ID_SERIAL_SHORT",
+		Vendor:           "ID_VENDOR",
+		DMName:           "DM_NAME",
+		DMUUID:           "DM_UUID",
+		MDUUID:           "MDUUID",
+		PTUUID:           "ID_PART_TABLE_UUID",
+		PTType:           "ID_PART_TABLE_TYPE",
+		PartUUID:         "ID_PART_ENTRY_UUID",
+		UeventFSUUID:     "ID_FS_UUID",
+		FSType:           "ID_FS_TYPE",
+		PCIPath:          "ID_PATH",
+		UeventSerialLong: "ID_SERIAL",
 	}
 
 	udevData, err := mapToUdevData(testEventMap)
