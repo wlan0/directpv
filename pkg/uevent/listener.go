@@ -41,6 +41,8 @@ const (
 	Add    action = "add"
 	Change action = "change"
 	Remove action = "remove"
+	// internal
+	Sync action = "sync"
 )
 
 var (
@@ -190,46 +192,74 @@ func (l *listener) handle(ctx context.Context, dEvent *deviceEvent) error {
 
 	if err := device.ProbeHostInfo(); err != nil {
 		// if drive is deleted
+		// FIXME: should we ignore errNotExist event for update, add and sync?
 		if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
 
+	drives, err := l.indexer.listDrives()
+	if err != nil {
+		return err
+	}
+	drive, matchResult := runMatchers(drives, device, stageOneMatchers, stageTwoMatchers)
+
 	switch dEvent.action {
-	case Add, Change:
-		return l.processUpdate(ctx, device)
+	case Add:
+		return l.processAdd(ctx, matchResult, device, drive)
+	case Change, Sync:
+		return l.processUpdate(ctx, matchResult, device, drive)
 	case Remove:
-		return l.processRemove(ctx, device)
+		return l.processRemove(ctx, matchResult, device, drive)
 	default:
 		return fmt.Errorf("invalid device action: %s", dEvent.action)
 	}
 }
 
-func (l *listener) processUpdate(ctx context.Context, device *sys.Device) error {
-	drive, err := l.indexer.getMatchingDrive(device)
-	switch {
-	case errors.Is(err, errNoMatchFound):
+func (l *listener) processAdd(ctx context.Context, matchResult matchResult, device *sys.Device, drive *directcsi.DirectCSIDrive) error {
+	switch matchResult {
+	case noMatch:
 		return l.handler.Add(ctx, device)
-	case err == nil:
-		return l.handler.Change(ctx, device, drive)
+	case changed, noChange:
+		klog.V(3).Infof("ignoring ADD action for the device %s as the corresponding drive match %s is found", device.DevPath(), drive.Name)
+		return nil
+	case tooManyMatches:
+		klog.V(3).Infof("ignoring ADD action as too many matches are found for the device %s", device.DevPath())
+		return nil
 	default:
-		return err
+		return fmt.Errorf("invalid match result: %v", matchResult)
 	}
 }
 
-func (l *listener) processRemove(ctx context.Context, device *sys.Device) error {
-	drive, err := l.indexer.getMatchingDrive(device)
-	switch {
-	case errors.Is(err, errNoMatchFound):
+func (l *listener) processUpdate(ctx context.Context, matchResult matchResult, device *sys.Device, drive *directcsi.DirectCSIDrive) error {
+	switch matchResult {
+	case noMatch:
+		return l.handler.Add(ctx, device)
+	case changed:
+		return l.handler.Change(ctx, device, drive)
+	case noChange:
+		return nil
+	case tooManyMatches:
+		return fmt.Errorf("too many matches found for device %s while processing UPDATE", device.DevPath())
+	default:
+		return fmt.Errorf("invalid match result: %v", matchResult)
+	}
+}
+
+func (l *listener) processRemove(ctx context.Context, matchResult matchResult, device *sys.Device, drive *directcsi.DirectCSIDrive) error {
+	switch matchResult {
+	case noMatch:
 		klog.V(3).InfoS(
 			"matching drive not found",
 			"ACTION", Remove,
 			"DEVICE", device.Name)
 		return nil
-	case err == nil:
+	case changed, noChange:
 		return l.handler.Remove(ctx, device, drive)
+	case tooManyMatches:
+		return fmt.Errorf("too many matches found for device %s while processing DELETE", device.DevPath())
 	default:
-		return err
+		return fmt.Errorf("invalid match result: %v", matchResult)
 	}
 }
 
@@ -253,7 +283,7 @@ func (l *listener) getNextDeviceUEvent(ctx context.Context) (*deviceEvent, error
 
 func (dEvent *deviceEvent) collectUDevData() error {
 	switch dEvent.action {
-	case Add, Change:
+	case Add, Change, Sync:
 		// Older kernels like in CentOS 7 does not send all information about the device,
 		// hence read relevant data from /run/udev/data/b<major>:<minor>
 		runUdevDataMap, err := sys.ReadRunUdevDataByMajorMinor(dEvent.udevData.Major, dEvent.udevData.Minor)
@@ -299,19 +329,6 @@ func (dEvent *deviceEvent) fillMissingUdevData(runUdevData *sys.UDevData) error 
 	if dEvent.udevData.Partition != runUdevData.Partition {
 		return errValueMismatch(dEvent.udevData.Path, "partitionnum", dEvent.udevData.Partition, runUdevData.Partition)
 	}
-
-	// Alternate pattern :-
-	//
-	// if runUdevData.WWID != "" {
-	// 	switch dEvent.udevData.WWID {
-	// 	case "":
-	// 		dEvent.udevData.WWID = runUdevData.WWID
-	// 	case runUdevData.WWID:
-	// 	default:
-	// 		errValueMismatch(dEvent.udevData.WWID, "WWID", dEvent.udevData.WWID, runUdevData.WWID)
-	// 	}
-	// }
-	//
 
 	if runUdevData.WWID != "" {
 		if dEvent.udevData.WWID == "" {
@@ -437,13 +454,9 @@ func (l *listener) sync() error {
 
 		event := &deviceEvent{
 			created:  time.Now().UTC(),
-			action:   Change,
+			action:   Sync,
 			udevData: runUdevData,
 			devPath:  runUdevData.Path,
-		}
-
-		if err = event.fillMissingUdevData(runUdevData); err != nil {
-			return err
 		}
 
 		l.eventQueue.push(event)
