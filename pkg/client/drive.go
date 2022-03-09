@@ -125,6 +125,13 @@ func NewDirectCSIDriveStatus(device *sys.Device, nodeID string, topology map[str
 				Reason:             string(directcsi.DirectCSIDriveReasonInitialized),
 				LastTransitionTime: metav1.Now(),
 			},
+			{
+				Type:               string(directcsi.DirectCSIDriveConditionReady),
+				Status:             metav1.ConditionTrue,
+				Message:            "",
+				Reason:             string(directcsi.DirectCSIDriveReasonReady),
+				LastTransitionTime: metav1.Now(),
+			},
 		},
 	}
 }
