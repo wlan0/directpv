@@ -190,10 +190,6 @@ func run(ctxMain context.Context, args []string) error {
 				return fmt.Errorf("error while initializing drive discovery: %v", err)
 			}
 			klog.V(3).Infof("Drive discovery finished")
-
-			// Check if the volume objects are migrated and CRDs versions are in-sync
-			volume.SyncVolumes(ctx, nodeID)
-			klog.V(3).Infof("volumes sync completed")
 		}
 
 		go func() {
