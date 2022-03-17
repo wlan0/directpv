@@ -25,6 +25,8 @@ import (
 const (
 	// MountOptPrjQuota option for project quota
 	MountOptPrjQuota = "prjquota"
+	// rw option for project quota
+	MountOptRW = "rw"
 )
 
 // Mount mounts device to target using fsType, flags and superBlockFlags.
@@ -65,4 +67,23 @@ func MountXFSDevice(device, target string, flags []string) error {
 
 	klog.V(3).InfoS("mounting device", "device", device, "target", target)
 	return SafeMount(device, target, "xfs", flags, MountOptPrjQuota)
+}
+
+func ValidDirectPVMountOpts(deviceMountOpts []string) bool {
+	expectedMountOpts := []string{
+		MountOptRW,
+	}
+	for _, expectedMountOpt := range expectedMountOpts {
+		foundExpectedOpt := false
+		for _, deviceMountOpt := range deviceMountOpts {
+			if deviceMountOpt == expectedMountOpt {
+				foundExpectedOpt = true
+				break
+			}
+		}
+		if !foundExpectedOpt {
+			return false
+		}
+	}
+	return true
 }

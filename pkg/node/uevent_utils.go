@@ -106,6 +106,8 @@ func (d *driveEventHandler) setDriveStatus(device *sys.Device, drive *directcsi.
 	}
 
 	if device.ReadOnly ||
+		device.Removable ||
+		device.Hidden ||
 		device.Partitioned ||
 		device.SwapOn ||
 		device.Master != "" ||
@@ -152,10 +154,10 @@ func validateDrive(drive *directcsi.DirectCSIDrive, device *sys.Device) error {
 				filepath.Join(sys.MountRoot, drive.Name),
 				device.FirstMountPoint))
 		}
-		if !validDirectPVMountOpts(device.FirstMountOptions) {
+		if !mount.ValidDirectPVMountOpts(device.FirstMountOptions) {
 			err = multierr.Append(err, errInvalidDrive(
 				"MountpointOptions",
-				mount.MountOptPrjQuota,
+				mount.MountOptRW,
 				device.FirstMountOptions))
 		}
 		if drive.Status.UeventFSUUID != device.UeventFSUUID {
@@ -186,6 +188,18 @@ func validateDrive(drive *directcsi.DirectCSIDrive, device *sys.Device) error {
 				"ReadOnly",
 				false,
 				device.ReadOnly))
+		}
+		if device.Hidden {
+			err = multierr.Append(err, errInvalidDrive(
+				"Hidden",
+				false,
+				device.Hidden))
+		}
+		if device.Removable {
+			err = multierr.Append(err, errInvalidDrive(
+				"Removable",
+				false,
+				device.Removable))
 		}
 		if device.SwapOn {
 			err = multierr.Append(err, errInvalidDrive(
@@ -251,25 +265,6 @@ func validDirectPVMounts(mountPoints []string) bool {
 		}
 	}
 	return false
-}
-
-func validDirectPVMountOpts(deviceMountOpts []string) bool {
-	expectedMountOpts := []string{
-		mount.MountOptPrjQuota,
-	}
-	for _, expectedMountOpt := range expectedMountOpts {
-		foundExpectedOpt := false
-		for _, deviceMountOpt := range deviceMountOpts {
-			if deviceMountOpt == expectedMountOpt {
-				foundExpectedOpt = true
-				break
-			}
-		}
-		if !foundExpectedOpt {
-			return false
-		}
-	}
-	return true
 }
 
 func checkAndUpdateConditions(drive *directcsi.DirectCSIDrive) {
